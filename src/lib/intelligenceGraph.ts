@@ -23,7 +23,23 @@ function safeIncludes(haystack: string, needle: string) {
   return haystack.toLowerCase().includes(needle.toLowerCase())
 }
 
+function canonicalEntityId(entity: IngestEntity) {
+  const normalised = entity.name
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^a-z0-9+@. -]/g, '')
+    .trim()
+    .replace(/\s/g, '_')
+
+  return `ENT-${entity.type}-${normalised}`
+}
+
 export function buildGraphFromIngest(source: IngestSource, claims: IngestClaim[], entities: IngestEntity[] = []) {
+  const canonicalEntities = entities.map(entity => ({
+    ...entity,
+    entity_id: canonicalEntityId(entity)
+  }))
+
   const sourceNode = {
     id: source.source_id,
     label: source.title || source.source_id,
@@ -39,12 +55,13 @@ export function buildGraphFromIngest(source: IngestSource, claims: IngestClaim[]
     text: claim.text
   }))
 
-  const entityNodes = entities.map(entity => ({
+  const entityNodes = canonicalEntities.map(entity => ({
     id: entity.entity_id,
     label: entity.name,
     type: entity.type,
     group: entity.type,
-    confidence: entity.confidence || 'moderate'
+    confidence: entity.confidence || 'moderate',
+    source_refs: entity.source_refs || []
   }))
 
   const claimLinks = claims.map(claim => ({
@@ -54,7 +71,7 @@ export function buildGraphFromIngest(source: IngestSource, claims: IngestClaim[]
     strength: claim.type === 'fact' ? 'strong' : claim.type === 'inference' ? 'moderate' : 'weak'
   }))
 
-  const sourceEntityLinks = entities.map(entity => ({
+  const sourceEntityLinks = canonicalEntities.map(entity => ({
     source: source.source_id,
     target: entity.entity_id,
     relation: 'mentions_entity',
@@ -62,7 +79,7 @@ export function buildGraphFromIngest(source: IngestSource, claims: IngestClaim[]
   }))
 
   const claimEntityLinks = claims.flatMap(claim =>
-    entities
+    canonicalEntities
       .filter(entity => safeIncludes(claim.text, entity.name))
       .map(entity => ({
         source: claim.claim_id,
@@ -84,7 +101,15 @@ export function mergeGraphs(existing: any, incoming: any) {
   const linkMap = new Map<string, any>()
 
   for (const node of existing?.nodes || []) nodeMap.set(node.id, node)
-  for (const node of incoming?.nodes || []) nodeMap.set(node.id, { ...nodeMap.get(node.id), ...node })
+
+  for (const node of incoming?.nodes || []) {
+    const previous = nodeMap.get(node.id)
+    nodeMap.set(node.id, {
+      ...previous,
+      ...node,
+      source_refs: [...new Set([...(previous?.source_refs || []), ...(node.source_refs || [])])]
+    })
+  }
 
   for (const link of existing?.links || []) linkMap.set(linkKey(link), link)
   for (const link of incoming?.links || []) linkMap.set(linkKey(link), link)
