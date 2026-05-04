@@ -1,12 +1,12 @@
 import express from 'express'
-import { randomUUID } from 'crypto'
+import { extractEntities } from '../utils/entities.js'
 
 const router = express.Router()
 
-// In-memory store (will be replaced with DB later)
 const store = {
   sources: [],
-  claims: []
+  claims: [],
+  entities: []
 }
 
 function makeId(prefix) {
@@ -47,12 +47,22 @@ router.post('/', async (req, res) => {
     source_refs: [sourceId]
   }))
 
+  const entities = extractEntities(text).map(e => ({
+    entity_id: makeId('ENT'),
+    name: e.name,
+    type: e.type,
+    confidence: e.confidence,
+    source_refs: [sourceId]
+  }))
+
   store.sources.push(source)
   store.claims.push(...claims)
+  store.entities.push(...entities)
 
   res.json({
     source,
-    claims
+    claims,
+    entities
   })
 })
 
