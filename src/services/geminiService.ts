@@ -1,20 +1,33 @@
 import { SearchResult } from "../types";
 
 export async function deepSearchEntity(entityName: string): Promise<SearchResult> {
+  if (!entityName || !entityName.trim()) {
+    throw new Error("Search query is empty");
+  }
+
   const response = await fetch('/api/ai/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: entityName })
+    body: JSON.stringify({ query: entityName.trim() })
   });
 
-  if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err.error || 'Search failed');
+  const text = await response.text();
+
+  let data: any;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (e) {
+    throw new Error(`Server returned non-JSON response: ${text.slice(0,200)}`);
   }
 
-  const data = await response.json();
-  
-  // Add values for visual weighting
+  if (!response.ok) {
+    throw new Error(data?.error || `Search failed (${response.status})`);
+  }
+
+  if (!data.nodes || !data.links) {
+    throw new Error("Malformed response from /api/ai/search");
+  }
+
   const nodes = data.nodes.map((n: any) => ({
     ...n,
     val: n.id === entityName || n.name === entityName ? 15 : 5
@@ -28,8 +41,6 @@ export async function deepSearchEntity(entityName: string): Promise<SearchResult
   };
 }
 
-// These would need server-side counterparts too if used, 
-// for now let's just stub them or implement them similarly if needed.
 export async function extractIntelligenceFromCsv(csvContent: string): Promise<SearchResult> {
   const response = await fetch('/api/ai/extract-csv', {
     method: 'POST',
@@ -37,12 +48,13 @@ export async function extractIntelligenceFromCsv(csvContent: string): Promise<Se
     body: JSON.stringify({ csvContent })
   });
 
+  const text = await response.text();
+  let data = text ? JSON.parse(text) : {};
+
   if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err.error || 'CSV extraction failed');
+    throw new Error(data?.error || 'CSV extraction failed');
   }
 
-  const data = await response.json();
   const nodes = data.nodes.map((n: any) => ({
     ...n,
     val: n.id === data.centralNode || n.name === data.centralNode ? 15 : 5
@@ -67,12 +79,13 @@ export async function huntZipIntelligence(
     body: JSON.stringify({ zipName, fileTree, fileSamples })
   });
 
+  const text = await response.text();
+  let data = text ? JSON.parse(text) : {};
+
   if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err.error || 'ZIP analysis failed');
+    throw new Error(data?.error || 'ZIP analysis failed');
   }
 
-  const data = await response.json();
   const nodes = data.nodes.map((n: any) => ({
     ...n,
     val: n.id === data.centralNode || n.name === data.centralNode ? 15 : 5
