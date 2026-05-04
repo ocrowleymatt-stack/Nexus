@@ -1,0 +1,31 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "An investigation project containing a graph and metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "graph": {
+          "type": "object",
+          "properties": {
+            "nodes": { "type": "array" },
+            "links": { "type": "array" }
+          }
+        },
+        "centralNode": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "graph", "userId"]
+    }
+  },
+  "firestore": {
+    "projects": {
+      "schema": "Project",
+      "description": "Collection of investigation projects."
+    }
+  }
+}

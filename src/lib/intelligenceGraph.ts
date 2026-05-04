@@ -97,25 +97,76 @@ export function buildGraphFromIngest(source: IngestSource, claims: IngestClaim[]
 
 export function mergeGraphs(existing: any, incoming: any) {
   const nodeMap = new Map<string, any>()
-  const linkKey = (link: any) => `${link.source}->${link.target}:${link.relation || 'link'}`
+  const linkKey = (link: any) => `${link.source}->${link.target}:${link.relation || 'link' || link.relationship}`
   const linkMap = new Map<string, any>()
 
-  for (const node of existing?.nodes || []) nodeMap.set(node.id, node)
-
-  for (const node of incoming?.nodes || []) {
-    const previous = nodeMap.get(node.id)
-    nodeMap.set(node.id, {
-      ...previous,
-      ...node,
-      source_refs: [...new Set([...(previous?.source_refs || []), ...(node.source_refs || [])])]
-    })
+  // Load existing nodes
+  for (const node of existing?.nodes || []) {
+    nodeMap.set(node.id, { ...node })
   }
 
-  for (const link of existing?.links || []) linkMap.set(linkKey(link), link)
-  for (const link of incoming?.links || []) linkMap.set(linkKey(link), link)
+  // Merge incoming nodes
+  for (const node of incoming?.nodes || []) {
+    const existingNode = nodeMap.get(node.id)
+    
+    if (existingNode) {
+      nodeMap.set(node.id, {
+        ...existingNode,
+        ...node,
+        // Build a richer profile by merging descriptions
+        description: existingNode.description && node.description && existingNode.description !== node.description
+          ? `${existingNode.description}\n\n[UPDATE]: ${node.description}`
+          : node.description || existingNode.description,
+        source_refs: [...new Set([...(existingNode.source_refs || []), ...(node.source_refs || [])])]
+      })
+    } else {
+      nodeMap.set(node.id, node)
+    }
+  }
+
+  // Deduplicate nodes by NAME (Case-Insensitive)
+  // This solves "Two contacts actually being one"
+  const nameMap = new Map<string, string>() // Name (Lower) -> Canonical ID
+  const finalNodes: any[] = []
+  const idRedirection = new Map<string, string>()
+
+  for (const [id, node] of nodeMap.entries()) {
+    const lowerName = node.label?.toLowerCase() || node.name?.toLowerCase() || id.toLowerCase()
+    if (nameMap.has(lowerName)) {
+      const canonicalId = nameMap.get(lowerName)!
+      idRedirection.set(id, canonicalId)
+      
+      const canonicalNode = nodeMap.get(canonicalId)
+      if (canonicalNode) {
+        canonicalNode.description = (canonicalNode.description || '') + (node.description ? `\n${node.description}` : '')
+        canonicalNode.source_refs = [...new Set([...(canonicalNode.source_refs || []), ...(node.source_refs || [])])]
+      }
+    } else {
+      nameMap.set(lowerName, id)
+      finalNodes.push(node)
+    }
+  }
+
+  // Merge Links and apply ID redirection for merged nodes
+  for (const link of [...(existing?.links || []), ...(incoming?.links || [])]) {
+    const sourceId = idRedirection.get(link.source) || link.source
+    const targetId = idRedirection.get(link.target) || link.target
+    
+    // Avoid self-links created by merging
+    if (sourceId === targetId) continue
+
+    const redirectedLink = {
+      ...link,
+      source: sourceId,
+      target: targetId
+    }
+    linkMap.set(linkKey(redirectedLink), redirectedLink)
+  }
 
   return {
-    nodes: [...nodeMap.values()],
-    links: [...linkMap.values()]
+    nodes: finalNodes,
+    links: [...linkMap.values()],
+    narrative: incoming.narrative || existing.narrative,
+    centralNode: incoming.centralNode || existing.centralNode
   }
 }

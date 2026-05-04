@@ -1,11 +1,21 @@
-import { useState } from 'react'
-import { RotateCcw, Network, FileText } from 'lucide-react'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { RotateCcw, Network, FileText, Search as SearchIcon, Compass, LogIn, LogOut, Save, FolderOpen, Plus, Trash2 } from 'lucide-react'
 import IngestToGraphPanel from './components/IngestToGraphPanel'
 import { NetworkMap } from './components/NetworkMap'
+import { SearchOverlay } from './components/SearchOverlay'
+import { deepSearchEntity, extractIntelligenceFromCsv, huntZipIntelligence } from './services/geminiService'
+import { mergeGraphs } from './lib/intelligenceGraph'
+import { auth, loginWithGoogle } from './lib/firebase'
+import { onAuthStateChanged, User, signOut } from 'firebase/auth'
+import { saveProject, getProjects, deleteProject } from './lib/firestoreService'
+
+import { NarrativeSidebar } from './components/NarrativeSidebar'
 
 type GraphData = {
   nodes: any[]
   links: any[]
+  narrative?: string
+  centralNode?: string
 }
 
 const initialGraph: GraphData = {
@@ -16,93 +26,442 @@ const initialGraph: GraphData = {
 export default function App() {
   const [graph, setGraph] = useState<GraphData>(initialGraph)
   const [selectedNode, setSelectedNode] = useState<any | null>(null)
+  const [centralNode, setCentralNode] = useState<string | null>(null)
+  const [isSearching, setIsSearching] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [overlayOpen, setOverlayOpen] = useState(true)
+  const [showNarrative, setShowNarrative] = useState(false)
+  const [driveToken, setDriveToken] = useState<string | null>(null)
+  
+  // Auth & Projects State
+  const [user, setUser] = useState<User | null>(null)
+  const [projects, setProjects] = useState<any[]>([])
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
+  const [projectName, setProjectName] = useState('New Investigation')
+  const [isSaving, setIsSaving] = useState(false)
+  const [showProjects, setShowProjects] = useState(false)
+
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u)
+      if (u) {
+        fetchProjects()
+      } else {
+        setProjects([])
+        setCurrentProjectId(null)
+      }
+    })
+    return () => unsubscribe()
+  }, [])
+
+  const fetchProjects = async () => {
+    const list = await getProjects()
+    setProjects(list)
+  }
+
+  const handleSave = async (forceName?: string) => {
+    if (!user) return
+    setIsSaving(true)
+    try {
+      const id = currentProjectId || `proj_${Date.now()}`
+      const name = forceName || projectName
+      await saveProject(id, name, graph, centralNode)
+      if (!currentProjectId) {
+        setCurrentProjectId(id)
+      }
+      fetchProjects()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  // Autosave when graph changes
+  useEffect(() => {
+    if (graph.nodes.length > 0 && user) {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = setTimeout(() => {
+        handleSave()
+      }, 2000)
+    }
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+    }
+  }, [graph, projectName, centralNode, user])
+
+  const startNewProject = () => {
+    setGraph(initialGraph)
+    setCurrentProjectId(null)
+    setProjectName('New Investigation')
+    setSelectedNode(null)
+    setCentralNode(null)
+    setOverlayOpen(true)
+  }
+
+  const loadProject = (p: any) => {
+    setGraph(p.graph)
+    setCurrentProjectId(p.id)
+    setProjectName(p.name)
+    setCentralNode(p.centralNode)
+    setOverlayOpen(false)
+    setShowProjects(false)
+  }
+
+  const handleDeleteProject = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (confirm('Are you sure you want to delete this project?')) {
+      await deleteProject(id)
+      if (currentProjectId === id) {
+        startNewProject()
+      }
+      fetchProjects()
+    }
+  }
 
   const reset = () => {
     setGraph(initialGraph)
     setSelectedNode(null)
+    setCentralNode(null)
+    setError(null)
+  }
+
+  const handleDeepSearch = async (query: string) => {
+    setIsSearching(true)
+    setError(null)
+    try {
+      const result = await deepSearchEntity(query)
+      setGraph(prev => mergeGraphs(prev, result))
+      setCentralNode(result.centralNode)
+      setOverlayOpen(false)
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message || 'Deep search failed')
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+  const handleCsvUpload = async (csvData: string) => {
+    setIsSearching(true)
+    setError(null)
+    try {
+      const result = await extractIntelligenceFromCsv(csvData)
+      setGraph(prev => mergeGraphs(prev, result))
+      setCentralNode(result.centralNode)
+      setOverlayOpen(false)
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message || 'CSV extraction failed')
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+  const handleZipUpload = async (zipName: string, fileTree: string[], samples: any) => {
+    setIsSearching(true)
+    setError(null)
+    try {
+      const result = await huntZipIntelligence(zipName, fileTree, samples)
+      setGraph(prev => mergeGraphs(prev, result))
+      setCentralNode(result.centralNode)
+      setOverlayOpen(false)
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message || 'ZIP extraction failed')
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+  const handleNodeClick = (node: any) => {
+    setSelectedNode(node)
+    setCentralNode(node.label || node.name || node.id)
   }
 
   const graphForMap = {
-    centralNode: 'Nexus Intelligence Core',
+    centralNode: centralNode || 'Nexus Intelligence Core',
     narrative: 'Live source-linked claim graph generated through the ingest pipeline.',
     nodes: graph.nodes,
     links: graph.links
   }
 
   return (
-    <div className="relative flex h-screen w-screen bg-[#050505] text-white selection:bg-green-500 selection:text-black">
-      <aside className="z-10 w-[360px] shrink-0 border-r border-white/10 bg-black/70 backdrop-blur-md">
-        <div className="border-b border-white/10 p-4">
-          <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-widest">
-            <Network size={18} className="text-green-500" />
-            Nexus
+    <div className="relative flex h-screen w-screen bg-[#050505] text-white selection:bg-green-500 selection:text-black overflow-hidden font-sans">
+      <aside className="z-10 w-[360px] shrink-0 border-r border-white/10 bg-black/80 backdrop-blur-xl flex flex-col shadow-2xl">
+        <div className="border-b border-white/10 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3 text-sm font-bold uppercase tracking-widest text-green-500">
+              <div className="relative">
+                <Network size={20} />
+                <div className="absolute inset-0 bg-green-500 blur-md opacity-50" />
+              </div>
+              Nexus
+            </div>
+            {user ? (
+              <button 
+                onClick={() => signOut(auth)}
+                className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/40 hover:text-white"
+                title="Logout"
+              >
+                <LogOut size={16} />
+              </button>
+            ) : (
+              <button 
+                onClick={loginWithGoogle}
+                className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"
+              >
+                <LogIn size={14} />
+                Login
+              </button>
+            )}
           </div>
-          <p className="mt-2 text-xs leading-5 text-white/50">
-            Evidence & Narrative Engine. Paste source material, create source-linked claims, and build the graph.
-          </p>
+
+          <div className="space-y-4">
+            <input 
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              className="w-full bg-transparent border-none text-lg font-black tracking-tight text-white focus:outline-none focus:ring-0 placeholder:text-white/20"
+              placeholder="Project Name"
+            />
+            
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setOverlayOpen(true)}
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-green-500 py-3 text-xs font-bold uppercase tracking-widest text-black hover:bg-green-400 active:scale-95 transition-all shadow-[0_0_30px_rgba(34,197,94,0.3)]"
+              >
+                <SearchIcon size={14} />
+                Intel Ingest
+              </button>
+              <button 
+                disabled={!user || isSaving}
+                onClick={() => handleSave()}
+                className="p-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all disabled:opacity-50"
+                title="Manual Save"
+              >
+                {isSaving ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                ) : (
+                  <Save size={16} className="text-white/60" />
+                )}
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setShowProjects(!showProjects)}
+                className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-[10px] font-bold uppercase tracking-widest border transition-all ${showProjects ? 'bg-white/20 border-white/40' : 'bg-transparent border-white/10 hover:bg-white/5'}`}
+              >
+                <FolderOpen size={14} />
+                {showProjects ? 'Close Projects' : 'My Projects'}
+              </button>
+              <button 
+                onClick={startNewProject}
+                className="p-2.5 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all"
+                title="New Investigation"
+              >
+                <Plus size={16} className="text-white/40" />
+              </button>
+            </div>
+          </div>
         </div>
 
-        <IngestToGraphPanel setGraph={setGraph} />
-
-        <div className="border-t border-white/10 p-4 text-xs text-white/60">
-          <div className="flex items-center gap-2 font-mono uppercase text-white/40">
-            <FileText size={14} />
-            Current Graph
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <div className="rounded-lg border border-white/10 p-3">
-              <div className="text-2xl font-bold text-white">{graph.nodes.length}</div>
-              <div className="font-mono uppercase text-white/40">Nodes</div>
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          {showProjects ? (
+            <div className="p-6 space-y-4">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Stored Investigations</h3>
+              {projects.length === 0 ? (
+                <div className="text-center py-10 opacity-20">
+                  <FolderOpen size={40} className="mx-auto mb-4" />
+                  <p className="text-[10px] font-mono">No projects found</p>
+                </div>
+              ) : (
+                projects.map(p => (
+                  <div 
+                    key={p.id}
+                    onClick={() => loadProject(p)}
+                    className={`group relative p-4 rounded-2xl border transition-all cursor-pointer ${currentProjectId === p.id ? 'bg-green-500/10 border-green-500/30' : 'bg-white/5 border-white/5 hover:border-white/10'}`}
+                  >
+                    <div className="text-sm font-bold truncate pr-8">{p.name}</div>
+                    <div className="text-[10px] font-mono text-white/30 mt-1 uppercase">
+                      {p.graph.nodes.length} nodes · {p.graph.links.length} links
+                    </div>
+                    <button 
+                      onClick={(e) => handleDeleteProject(p.id, e)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
-            <div className="rounded-lg border border-white/10 p-3">
-              <div className="text-2xl font-bold text-white">{graph.links.length}</div>
-              <div className="font-mono uppercase text-white/40">Links</div>
+          ) : (
+            <IngestToGraphPanel setGraph={setGraph} />
+          )}
+        </div>
+
+        <div className="border-t border-white/10 p-6 bg-black/40">
+          <div className="flex items-center gap-2 font-mono text-[10px] uppercase text-white/30 tracking-widest">
+            <FileText size={14} />
+            Network Topology
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="rounded-xl bg-white/5 border border-white/5 p-4 transition-colors hover:border-white/10">
+              <div className="text-3xl font-black text-white">{graph.nodes.length}</div>
+              <div className="font-mono text-[9px] uppercase tracking-wider text-white/40">Entities</div>
+            </div>
+            <div className="rounded-xl bg-white/5 border border-white/5 p-4 transition-colors hover:border-white/10">
+              <div className="text-3xl font-black text-white">{graph.links.length}</div>
+              <div className="font-mono text-[9px] uppercase tracking-wider text-white/40">Correlations</div>
             </div>
           </div>
 
           <button
             onClick={reset}
-            className="mt-4 flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-white/60 hover:bg-white/10 hover:text-white"
+            className="mt-6 flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 font-mono text-[10px] uppercase tracking-widest text-white/50 hover:bg-white/10 hover:text-white transition-colors"
           >
             <RotateCcw size={14} />
-            Reset Graph
+            Purge Workspace
           </button>
         </div>
       </aside>
 
-      <main className="relative flex-1">
+      <main className="relative flex-1 bg-[radial-gradient(circle_at_center,_rgba(22,163,74,0.05)_0%,_transparent_70%)]">
         {graph.nodes.length > 0 ? (
           <NetworkMap
             data={graphForMap as any}
-            onNodeClick={(node: any) => setSelectedNode(node)}
+            onNodeClick={handleNodeClick}
           />
         ) : (
           <div className="flex h-full items-center justify-center">
-            <div className="select-none text-center opacity-25">
-              <h1 className="font-serif text-7xl italic">Investigation</h1>
-              <p className="ml-[1.5em] mt-4 font-mono uppercase tracking-[1.5em]">Awaiting Source</p>
+            <div className="select-none text-center">
+              <h1 className="font-serif text-8xl italic text-white/10 tracking-tighter">Investigation</h1>
+              <p className="mt-6 font-mono text-xs uppercase tracking-[2em] text-white/20 animate-pulse">Awaiting Intel</p>
             </div>
           </div>
         )}
       </main>
 
-      <aside className="z-10 w-[340px] shrink-0 border-l border-white/10 bg-black/70 p-4 backdrop-blur-md">
-        <h2 className="text-xs font-bold uppercase tracking-widest text-white/40">Selection</h2>
+      <aside className="z-10 w-[380px] shrink-0 border-l border-white/10 bg-black/80 p-6 backdrop-blur-xl flex flex-col shadow-[-20px_0_40px_rgba(0,0,0,0.5)]">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[10px] font-bold uppercase tracking-widest text-white/30">Intelligence Profile</h2>
+          {selectedNode && (
+            <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,1)]" />
+          )}
+        </div>
+        
         {selectedNode ? (
-          <div className="mt-4 space-y-3 text-sm">
-            <div className="text-lg font-bold">{selectedNode.label || selectedNode.id}</div>
-            <div className="rounded-lg border border-white/10 p-3 font-mono text-xs text-white/60">
-              <div>ID: {selectedNode.id}</div>
-              <div>Type: {selectedNode.type || selectedNode.group || 'unknown'}</div>
+          <div className="mt-8 space-y-6 overflow-y-auto custom-scrollbar flex-1 pr-2">
+            <div className="space-y-4">
+              <div className="text-2xl font-black tracking-tight text-white/90 leading-none">
+                {selectedNode.label || selectedNode.name || selectedNode.id}
+              </div>
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] font-mono uppercase text-white/50 tracking-wider">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500/50" />
+                {selectedNode.type || selectedNode.group || 'Identified Entity'}
+              </div>
             </div>
+
+            <div className="rounded-2xl bg-white/5 border border-white/5 p-5 font-mono text-[11px] text-white/40 space-y-2">
+              <div className="flex justify-between">
+                <span>UID</span>
+                <span className="text-white/60 truncate ml-4">{selectedNode.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>RELIABILITY</span>
+                <span className="text-green-500/70">VERIFIED</span>
+              </div>
+            </div>
+            
+            {selectedNode.description && (
+              <div className="relative px-6 py-4">
+                <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-gradient-to-b from-green-500/0 via-green-500/50 to-green-500/0" />
+                <div className="text-white/70 italic text-sm leading-relaxed whitespace-pre-wrap">
+                  {selectedNode.description}
+                </div>
+              </div>
+            )}
+
+            {selectedNode.source_refs && selectedNode.source_refs.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/20">Evidence Threads</h3>
+                <div className="space-y-2">
+                  {selectedNode.source_refs.map((ref: string, i: number) => (
+                    <div key={i} className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-[10px] font-mono text-white/40 break-all leading-tight">
+                      {ref}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={() => handleNodeClick(selectedNode)}
+              className="w-full flex items-center justify-center gap-2 rounded-xl border border-green-500/30 py-3 text-[10px] font-mono uppercase text-green-500 hover:bg-green-500/10 transition-all active:scale-95"
+            >
+              <Compass size={14} />
+              Center Viewport on Node
+            </button>
           </div>
         ) : (
-          <p className="mt-4 text-sm text-white/50">Click a node to inspect it.</p>
+          <div className="mt-20 text-center space-y-4 opacity-30 group cursor-default">
+            <Compass size={40} className="mx-auto text-white/50 group-hover:rotate-45 transition-transform duration-700" />
+            <p className="text-xs font-mono uppercase tracking-widest text-white/50 leading-relaxed max-w-[200px] mx-auto">
+              Select a node within the lattice to extract granular intelligence
+            </p>
+          </div>
         )}
+
+        <div className="mt-8 pt-8 border-t border-white/5">
+             <div className="text-[9px] font-mono uppercase text-white/20 tracking-tighter">
+                Session ID: {Math.random().toString(36).substring(7).toUpperCase()}
+             </div>
+        </div>
       </aside>
 
       <div className="pointer-events-none fixed inset-0 opacity-[0.03]">
         <div className="h-full w-full" style={{ backgroundImage: 'radial-gradient(#fff 1px, transparent 0)', backgroundSize: '40px 40px' }} />
+      </div>
+
+      {overlayOpen && (
+        <SearchOverlay
+          isSearching={isSearching}
+          error={error}
+          driveToken={driveToken}
+          onDriveAuth={setDriveToken}
+          onSearch={handleDeepSearch}
+          onCsvUpload={handleCsvUpload}
+          onZipUpload={handleZipUpload}
+        />
+      )}
+
+      {showNarrative && (
+        <NarrativeSidebar 
+          data={graph as any} 
+          onClose={() => setShowNarrative(false)} 
+        />
+      )}
+
+      {/* Global Status Bar */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-black/60 backdrop-blur-xl border border-white/10 rounded-full flex items-center gap-4 shadow-2xl">
+        <div className="flex items-center gap-2">
+          <div className={`h-2 w-2 rounded-full ${isSearching ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'}`} />
+          <span className="text-[10px] font-mono uppercase tracking-widest text-white/60">
+            {isSearching ? 'Processing Intel...' : 'System Idle'}
+          </span>
+        </div>
+        {graph.nodes.length > 0 && (
+          <button 
+            onClick={() => setShowNarrative(true)}
+            className="flex items-center gap-2 pl-4 border-l border-white/10 hover:text-green-400 transition-colors"
+          >
+            <FileText size={12} />
+            <span className="text-[10px] font-mono uppercase tracking-widest">Case Narrative</span>
+          </button>
+        )}
       </div>
     </div>
   )

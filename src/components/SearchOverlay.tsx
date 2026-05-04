@@ -8,12 +8,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Search, Loader2, Cpu, Globe, Database, FileUp, UploadCloud, Archive, Box, CheckCircle, ShieldCheck } from 'lucide-react';
 import Papa from 'papaparse';
 import { analyzeZipFile, getZipFileContent } from '../services/zipService';
+import { NexusGuide } from './NexusGuide';
 
 interface SearchOverlayProps {
   onSearch: (query: string) => void;
   onCsvUpload: (csvData: string) => void;
   onZipUpload: (zipName: string, fileTree: string[], samples: { [path: string]: string }) => void;
   isSearching: boolean;
+  error: string | null;
   driveToken: string | null;
   onDriveAuth: (token: string) => void;
 }
@@ -23,11 +25,12 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   onCsvUpload, 
   onZipUpload, 
   isSearching, 
+  error,
   driveToken, 
   onDriveAuth 
 }) => {
   const [query, setQuery] = useState('');
-  const [mode, setMode] = useState<'search' | 'csv' | 'zip' | 'drive'>('search');
+  const [mode, setMode] = useState<'guide' | 'search' | 'csv' | 'zip' | 'drive'>('guide');
   const [isDragging, setIsDragging] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -75,7 +78,9 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
     if (file.name.endsWith('.csv')) {
       Papa.parse(file, {
         complete: (results) => {
-          const csvString = JSON.stringify(results.data);
+          // Robust handling: slice data if it's massive to avoid string length limits
+          const dataToIngest = results.data.length > 20000 ? results.data.slice(0, 20000) : results.data;
+          const csvString = JSON.stringify(dataToIngest);
           onCsvUpload(csvString);
         },
         header: true,
@@ -124,6 +129,12 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
             
             <div className="flex bg-white/5 p-1 rounded-lg border border-white/10 overflow-x-auto max-w-[300px] md:max-w-none">
               <button 
+                onClick={() => setMode('guide')}
+                className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'guide' ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
+              >
+                Guide
+              </button>
+              <button 
                 onClick={() => setMode('search')}
                 className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'search' ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
               >
@@ -150,8 +161,35 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
             </div>
           </div>
 
-          <AnimatePresence mode="wait">
-            {mode === 'search' ? (
+            <AnimatePresence mode="wait">
+              {error && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-3 text-red-500 text-xs font-mono"
+                >
+                  <Database size={16} />
+                  <span>Error: {error}</span>
+                </motion.div>
+              )}
+              {mode === 'guide' ? (
+                <motion.div
+                  key="guide-mode"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                >
+                  <NexusGuide />
+                  <div className="mt-8 flex justify-center">
+                    <button 
+                      onClick={() => setMode('search')}
+                      className="px-8 py-3 bg-green-500 text-black rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-green-400 transition-all shadow-[0_0_20px_rgba(34,197,94,0.3)]"
+                    >
+                      Enter Investigative Core
+                    </button>
+                  </div>
+                </motion.div>
+              ) : mode === 'search' ? (
               <motion.div
                 key="search-mode"
                 initial={{ opacity: 0, x: -10 }}

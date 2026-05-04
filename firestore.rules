@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidProject(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.graph is map
+        && data.graph.nodes is list
+        && data.graph.links is list
+        && data.userId == request.auth.uid;
+    }
+
+    match /projects/{projectId} {
+      allow create: if isSignedIn() 
+        && isValidId(projectId) 
+        && isValidProject(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      
+      allow update: if isSignedIn() 
+        && isOwner(resource.data.userId)
+        && isValidProject(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'graph', 'centralNode', 'updatedAt'])
+        );
+      
+      allow delete: if isSignedIn() && isOwner(resource.data.userId);
+      
+      allow get: if isSignedIn() && isOwner(resource.data.userId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+  }
+}

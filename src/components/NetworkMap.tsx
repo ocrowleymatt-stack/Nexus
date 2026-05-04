@@ -14,7 +14,18 @@ interface NetworkMapProps {
 
 export const NetworkMap: React.FC<NetworkMapProps> = ({ data, onNodeClick }) => {
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const fgRef = React.useRef<any>(null);
   const [dimensions, setDimensions] = React.useState({ width: 800, height: 600 });
+
+  React.useEffect(() => {
+    if (data.centralNode && fgRef.current) {
+      const node = data.nodes.find(n => n.id === data.centralNode || n.name === data.centralNode) as any;
+      if (node && node.x && node.y) {
+        fgRef.current.centerAt(node.x, node.y, 1000);
+        fgRef.current.zoom(2, 1000);
+      }
+    }
+  }, [data.centralNode, data.nodes]);
 
   React.useEffect(() => {
     const updateSize = () => {
@@ -43,37 +54,60 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({ data, onNodeClick }) => 
       </div>
 
       <ForceGraph2D
+        ref={fgRef}
         graphData={graphData}
         width={dimensions.width}
         height={dimensions.height}
         backgroundColor="#050505"
         nodeLabel="name"
         nodeColor={(node: any) => {
+          if (node.id === data.centralNode || node.name === data.centralNode) return '#00ff00';
           switch (node.type) {
             case 'person': return '#3b82f6';
             case 'organization': return '#ef4444';
             case 'platform': return '#10b981';
             case 'event': return '#f59e0b';
+            case 'source': return '#a855f7';
             default: return '#6b7280';
           }
         }}
-        linkColor={() => 'rgba(255, 255, 255, 0.1)'}
-        linkDirectionalArrowLength={3.5}
+        nodeVal={(node: any) => {
+          if (node.id === data.centralNode || node.name === data.centralNode) return 20;
+          return node.val || 5;
+        }}
+        linkColor={() => 'rgba(255, 255, 255, 0.7)'}
+        linkWidth={2}
+        linkDirectionalParticles={3}
+        linkDirectionalParticleSpeed={0.007}
+        linkDirectionalParticleWidth={2}
+        linkDirectionalArrowLength={6}
         linkDirectionalArrowRelPos={1}
-        linkCurvature={0.25}
+        linkCurvature={0.2}
         nodeCanvasObject={(node: any, ctx, globalScale) => {
-          const label = node.name;
-          const fontSize = 12/globalScale;
-          ctx.font = `${fontSize}px "JetBrains Mono"`;
+          const isCentral = node.id === data.centralNode || node.name === data.centralNode;
+          const label = node.name || node.label || node.id;
+          const fontSize = (isCentral ? 14 : 12) / globalScale;
+          
+          ctx.font = `${isCentral ? 'bold' : 'normal'} ${fontSize}px "JetBrains Mono"`;
           const textWidth = ctx.measureText(label).width;
-          const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2); 
+          const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.4); 
+
+          if (isCentral) {
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, (fontSize * 0.8), 0, 2 * Math.PI, false);
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+            ctx.fill();
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2 / globalScale;
+            ctx.stroke();
+          }
 
           ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
           ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y - bckgDimensions[1] / 2, bckgDimensions[0], bckgDimensions[1]);
-
+          
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillStyle = node.color || '#fff';
+          ctx.fillStyle = isCentral ? '#00ff00' : (node.color || '#fff');
           ctx.fillText(label, node.x, node.y);
 
           node.__bckgDimensions = bckgDimensions; // to let nodeClick work
