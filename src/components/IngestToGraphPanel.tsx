@@ -8,7 +8,7 @@ export default function IngestToGraphPanel({ setGraph }: any) {
   const submit = async () => {
     setLoading(true)
 
-    const res = await fetch('http://localhost:3000/ingest', {
+    const res = await fetch('/ingest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -19,7 +19,11 @@ export default function IngestToGraphPanel({ setGraph }: any) {
 
     const data = await res.json()
 
-    const graph = buildGraphFromIngest(data.source, data.claims)
+    const graph = buildGraphFromIngest(
+      data.source,
+      data.claims,
+      data.entities || []
+    )
 
     setGraph((prev: any) => mergeGraphs(prev, graph))
 
