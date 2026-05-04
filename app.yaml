@@ -1,0 +1,26 @@
+runtime: nodejs20
+
+instance_class: F1
+
+env_variables:
+  NODE_ENV: "production"
+  PORT: "8080"
+  # Add secrets in Google Cloud Secret Manager or App Engine env vars.
+  # COMPANIES_HOUSE_API_KEY: ""
+  # HUNTER_API_KEY: ""
+  # PDL_API_KEY: ""
+  # HF_API_KEY: ""
+
+handlers:
+  - url: /assets
+    static_dir: dist/assets
+    secure: always
+
+  - url: /(.*\.(js|css|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf|map))$
+    static_files: dist/\1
+    upload: dist/.*\.(js|css|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf|map)$
+    secure: always
+
+  - url: /.*
+    script: auto
+    secure: always
