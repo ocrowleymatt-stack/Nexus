@@ -126,6 +126,115 @@ async function callGeminiApi(prompt) {
   return parseAIJson(text);
 }
 
+function toSafeId(value, fallback = 'unknown') {
+  const raw = String(value ?? '').trim();
+  return raw || fallback;
+}
+
+function inferNodeType(key, value) {
+  const field = String(key || '').toLowerCase();
+  const text = String(value || '').toLowerCase();
+
+  if (field.includes('email') || text.includes('@')) return 'platform';
+  if (field.includes('phone') || field.includes('mobile') || field.includes('tel')) return 'platform';
+  if (field.includes('address') || field.includes('city') || field.includes('town') || field.includes('postcode') || field.includes('location')) return 'location';
+  if (field.includes('company') || field.includes('organisation') || field.includes('organization') || field.includes('employer')) return 'organization';
+  if (field.includes('date') || field.includes('time')) return 'event';
+  if (field.includes('name') || field.includes('person') || field.includes('contact')) return 'person';
+  return 'other';
+}
+
+function buildDeterministicCsvGraph(csvContent) {
+  let rows = csvContent;
+
+  if (typeof rows === 'string') {
+    try {
+      rows = JSON.parse(rows);
+    } catch {
+      rows = [{ raw: rows }];
+    }
+  }
+
+  if (!Array.isArray(rows)) {
+    rows = [rows];
+  }
+
+  const cleanRows = rows
+    .filter((row) => row && typeof row === 'object')
+    .slice(0, 500);
+
+  if (cleanRows.length === 0) {
+    return {
+      centralNode: 'CSV Import',
+      nodes: [{ id: 'CSV Import', name: 'CSV Import', type: 'other', description: 'CSV upload contained no usable structured rows.' }],
+      links: [],
+      narrative: 'CSV upload completed, but no usable structured rows were found.'
+    };
+  }
+
+  const columns = Array.from(new Set(cleanRows.flatMap((row) => Object.keys(row || {}))));
+  const likelyCentralColumn = columns.find((column) => /name|person|subject|entity|contact|title/i.test(column)) || columns[0] || 'CSV Row';
+  const centralNode = 'CSV Import';
+
+  const nodeMap = new Map();
+  const linkMap = new Map();
+
+  nodeMap.set(centralNode, {
+    id: centralNode,
+    name: centralNode,
+    type: 'other',
+    description: `Deterministic graph generated from ${cleanRows.length} CSV rows and ${columns.length} columns without using an external AI provider.`
+  });
+
+  for (const [index, row] of cleanRows.entries()) {
+    const rowRecord = row || {};
+    const subjectValue = toSafeId(rowRecord[likelyCentralColumn], `Row ${index + 1}`);
+    const subjectId = subjectValue;
+
+    if (!nodeMap.has(subjectId)) {
+      nodeMap.set(subjectId, {
+        id: subjectId,
+        name: subjectValue,
+        type: inferNodeType(likelyCentralColumn, subjectValue),
+        description: `CSV subject from column "${likelyCentralColumn}".`
+      });
+    }
+
+    const centralLinkKey = `${centralNode}->${subjectId}->contains`;
+    linkMap.set(centralLinkKey, { source: centralNode, target: subjectId, relationship: 'contains CSV row' });
+
+    for (const [key, value] of Object.entries(rowRecord)) {
+      const text = String(value ?? '').trim();
+      if (!text || key === likelyCentralColumn) continue;
+      if (text.length > 160) continue;
+
+      const fieldNodeId = `${key}: ${text}`;
+      if (!nodeMap.has(fieldNodeId)) {
+        nodeMap.set(fieldNodeId, {
+          id: fieldNodeId,
+          name: text,
+          type: inferNodeType(key, text),
+          description: `Value from CSV column "${key}".`
+        });
+      }
+
+      const linkKey = `${subjectId}->${fieldNodeId}->${key}`;
+      linkMap.set(linkKey, { source: subjectId, target: fieldNodeId, relationship: key });
+
+      if (nodeMap.size >= 250) break;
+    }
+
+    if (nodeMap.size >= 250) break;
+  }
+
+  return {
+    centralNode,
+    nodes: Array.from(nodeMap.values()),
+    links: Array.from(linkMap.values()),
+    narrative: `CSV ingestion succeeded. Nexus generated a deterministic network from ${cleanRows.length} rows. Central column inferred as "${likelyCentralColumn}". AI extraction is bypassed for CSV uploads to avoid provider-side pattern/JSON failures.`
+  };
+}
+
 export async function deepSearchEntity(entityName) {
   const safeEntityName = String(entityName || '').trim();
   if (!safeEntityName) throw new Error("Search query is empty");
@@ -177,47 +286,7 @@ export async function deepSearchEntity(entityName) {
 }
 
 export async function extractIntelligenceFromCsv(csvContent) {
-  const prompt = `
-    You are a data intelligence analyst. I have provided a raw CSV data dump.
-    Your task is to analyze this data and extract a meaningful network map and a narrative summary.
-    
-    1. Identify the "central subject" of the data.
-    2. Identify all related "nodes" (people, organizations, locations).
-    3. Define "links" (relationships, transactions, or interactions) between these nodes.
-    4. Write a markdown-formatted intelligence report that synthesizes the "narrative" of what's happening based on the data.
-    
-    Return only a valid JSON object with this exact shape:
-    {
-      "centralNode": "string",
-      "nodes": [ { "id": "string", "name": "string", "type": "person|organization|event|platform|location|other", "description": "string" } ],
-      "links": [ { "source": "string", "target": "string", "relationship": "string" } ],
-      "narrative": "string"
-    }
-    
-    CSV DATA:
-    ${csvContent}
-  `;
-
-  if (process.env.Venice || process.env.VENICE_API_KEY) {
-    try { return assertGraphResult(await callVeniceAI(prompt), 'CSV Import'); } catch (e) { console.warn("Venice failed:", e?.message || e); }
-  }
-
-  if (vertexAI) {
-    try {
-      const model = vertexAI.getGenerativeModel({ model: VERTEX_MODEL });
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: 'application/json' }
-      });
-      const content = result?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (content) return assertGraphResult(parseAIJson(content), 'CSV Import');
-    } catch (e) { console.warn("Vertex AI failed:", e?.message || e); }
-  }
-
-  if (ai) {
-    return assertGraphResult(await callGeminiApi(prompt), 'CSV Import');
-  }
-  throw new Error("No AI available for CSV extraction");
+  return buildDeterministicCsvGraph(csvContent);
 }
 
 export async function huntZipIntelligence(zipName, fileTree, fileSamples) {
