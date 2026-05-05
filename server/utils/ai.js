@@ -3,11 +3,11 @@ import { VertexAI } from "@google-cloud/vertexai";
 import dotenv from 'dotenv';
 dotenv.config();
 
-let ai;
+let ai = null;
 let vertexAI = null;
 
 if (process.env.GEMINI_API_KEY) {
-  ai = new GoogleGenAI(process.env.GEMINI_API_KEY);
+  ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 }
 
 try {
@@ -19,7 +19,7 @@ try {
   console.warn("Vertex AI / ADC initialization failed.");
 }
 
-const SEARCH_MODEL = "gemini-3-flash-preview";
+const SEARCH_MODEL = "gemini-2.5-flash";
 const VERTEX_MODEL = "gemini-1.5-flash-002";
 
 async function callVeniceAI(prompt) {
@@ -47,47 +47,114 @@ async function callVeniceAI(prompt) {
   }
 
   const data = await response.json();
-  const content = data.choices[0].message.content;
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Venice returned an empty response");
+
   return parseAIJson(content);
 }
 
 function parseAIJson(text) {
+  if (typeof text !== 'string') {
+    throw new Error("Intelligence engine returned a non-text response.");
+  }
+
+  const cleaned = text
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
   try {
-    // Try to find JSON block - more flexible regex
-    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-    const jsonString = jsonMatch ? jsonMatch[1] : text;
-    return JSON.parse(jsonString.trim());
-  } catch (e) {
-    console.error("Failed to parse AI JSON:", text);
-    throw new Error("Intelligence engine returned malformed data.");
+    return JSON.parse(cleaned);
+  } catch (firstError) {
+    const objectStart = cleaned.indexOf('{');
+    const objectEnd = cleaned.lastIndexOf('}');
+
+    if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
+      const candidate = cleaned.slice(objectStart, objectEnd + 1);
+      try {
+        return JSON.parse(candidate);
+      } catch (secondError) {
+        console.error("Failed to parse extracted AI JSON:", candidate);
+      }
+    }
+
+    console.error("Failed to parse AI JSON:", cleaned);
+    throw new Error("Intelligence engine returned malformed JSON. Try a shorter or more specific search query.");
   }
 }
 
+function assertGraphResult(result, fallbackCentralNode) {
+  if (!result || typeof result !== 'object') {
+    throw new Error("Intelligence engine returned an empty result.");
+  }
+
+  const nodes = Array.isArray(result.nodes) ? result.nodes : [];
+  const links = Array.isArray(result.links) ? result.links : [];
+
+  if (nodes.length === 0) {
+    nodes.push({
+      id: fallbackCentralNode,
+      name: fallbackCentralNode,
+      type: 'other',
+      description: 'Central search entity. No additional structured entities were returned by the intelligence engine.'
+    });
+  }
+
+  return {
+    ...result,
+    centralNode: result.centralNode || fallbackCentralNode,
+    nodes,
+    links,
+    narrative: result.narrative || ''
+  };
+}
+
+async function callGeminiApi(prompt) {
+  if (!ai) throw new Error("Gemini API Key not found");
+
+  const result = await ai.models.generateContent({
+    model: SEARCH_MODEL,
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json'
+    }
+  });
+
+  const text = result?.text;
+  if (!text) throw new Error("Gemini returned an empty response");
+
+  return parseAIJson(text);
+}
+
 export async function deepSearchEntity(entityName) {
+  const safeEntityName = String(entityName || '').trim();
+  if (!safeEntityName) throw new Error("Search query is empty");
+
   const prompt = `
-    Conduct a deep research investigation into the entity: "${entityName}".
+    Conduct a deep research investigation into the entity: ${JSON.stringify(safeEntityName)}.
     
     1. Identify all key "nodes" (entities, organizations, aliases) connected to this entity.
     2. Characterize each node with a descriptive profile.
     3. Define the specific "links" (relationships) between these nodes.
     4. Write a cohesive investigative narrative that explains the "story" behind these connections.
     
-    Structure your response as a JSON object:
+    Return only a valid JSON object with this exact shape:
     {
+      "centralNode": "string",
       "nodes": [ { "id": "string", "name": "string", "type": "person|organization|event|platform|location|other", "description": "string" } ],
       "links": [ { "source": "string", "target": "string", "relationship": "string" } ],
       "narrative": "string"
     }
   `;
 
-  // Try Venice first if configured
   if (process.env.Venice || process.env.VENICE_API_KEY) {
     try {
-      return await callVeniceAI(prompt);
-    } catch (e) { console.warn("Venice failed"); }
+      return assertGraphResult(await callVeniceAI(prompt), safeEntityName);
+    } catch (e) {
+      console.warn("Venice failed:", e?.message || e);
+    }
   }
 
-  // Try ADC / Vertex AI
   if (vertexAI) {
     try {
       const model = vertexAI.getGenerativeModel({ model: VERTEX_MODEL });
@@ -95,17 +162,15 @@ export async function deepSearchEntity(entityName) {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: { responseMimeType: 'application/json' }
       });
-      const content = result.response.candidates?.[0].content.parts[0].text;
-      if (content) return JSON.parse(content);
-    } catch (e) { console.warn("Vertex AI failed"); }
+      const content = result?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (content) return assertGraphResult(parseAIJson(content), safeEntityName);
+    } catch (e) {
+      console.warn("Vertex AI failed:", e?.message || e);
+    }
   }
 
-  // Fallback to Gemini API
   if (ai) {
-    const model = ai.getGenerativeModel({ model: SEARCH_MODEL });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    return parseAIJson(text);
+    return assertGraphResult(await callGeminiApi(prompt), safeEntityName);
   }
 
   throw new Error("No AI available for deep search");
@@ -121,7 +186,7 @@ export async function extractIntelligenceFromCsv(csvContent) {
     3. Define "links" (relationships, transactions, or interactions) between these nodes.
     4. Write a markdown-formatted intelligence report that synthesizes the "narrative" of what's happening based on the data.
     
-    Structure your response as a JSON object:
+    Return only a valid JSON object with this exact shape:
     {
       "centralNode": "string",
       "nodes": [ { "id": "string", "name": "string", "type": "person|organization|event|platform|location|other", "description": "string" } ],
@@ -134,7 +199,7 @@ export async function extractIntelligenceFromCsv(csvContent) {
   `;
 
   if (process.env.Venice || process.env.VENICE_API_KEY) {
-    try { return await callVeniceAI(prompt); } catch (e) {}
+    try { return assertGraphResult(await callVeniceAI(prompt), 'CSV Import'); } catch (e) { console.warn("Venice failed:", e?.message || e); }
   }
 
   if (vertexAI) {
@@ -144,29 +209,26 @@ export async function extractIntelligenceFromCsv(csvContent) {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: { responseMimeType: 'application/json' }
       });
-      const content = result.response.candidates?.[0].content.parts[0].text;
-      if (content) return parseAIJson(content);
-    } catch (e) {}
+      const content = result?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (content) return assertGraphResult(parseAIJson(content), 'CSV Import');
+    } catch (e) { console.warn("Vertex AI failed:", e?.message || e); }
   }
 
   if (ai) {
-    const model = ai.getGenerativeModel({ model: SEARCH_MODEL });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    return parseAIJson(text);
+    return assertGraphResult(await callGeminiApi(prompt), 'CSV Import');
   }
   throw new Error("No AI available for CSV extraction");
 }
 
 export async function huntZipIntelligence(zipName, fileTree, fileSamples) {
-  const samplesText = Object.entries(fileSamples)
-    .map(([path, content]) => `FILE: ${path}\nCONTENT: ${content.substring(0, 1000)}`)
+  const samplesText = Object.entries(fileSamples || {})
+    .map(([path, content]) => `FILE: ${path}\nCONTENT: ${String(content).substring(0, 1000)}`)
     .join('\n\n---\n\n');
 
   const prompt = `
-    You are a digital forensic investigator. I have a ZIP archive named "${zipName}".
+    You are a digital forensic investigator. I have a ZIP archive named ${JSON.stringify(zipName)}.
     Here is the file structure:
-    ${fileTree.join('\n')}
+    ${(fileTree || []).join('\n')}
     
     And here are samples from key files:
     ${samplesText}
@@ -177,7 +239,7 @@ export async function huntZipIntelligence(zipName, fileTree, fileSamples) {
     3. Construct an "Investigative Profile" narrative that summarizes their digital footprint and key affiliations.
     4. Extract nodes and links reflecting these relationships.
     
-    Structure your response as a JSON object:
+    Return only a valid JSON object with this exact shape:
     {
       "centralNode": "string",
       "nodes": [ { "id": "string", "name": "string", "type": "person|organization|event|platform|location|other", "description": "string" } ],
@@ -187,7 +249,7 @@ export async function huntZipIntelligence(zipName, fileTree, fileSamples) {
   `;
 
   if (process.env.Venice || process.env.VENICE_API_KEY) {
-    try { return await callVeniceAI(prompt); } catch (e) {}
+    try { return assertGraphResult(await callVeniceAI(prompt), zipName || 'ZIP Import'); } catch (e) { console.warn("Venice failed:", e?.message || e); }
   }
 
   if (vertexAI) {
@@ -197,16 +259,13 @@ export async function huntZipIntelligence(zipName, fileTree, fileSamples) {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: { responseMimeType: 'application/json' }
       });
-      const content = result.response.candidates?.[0].content.parts[0].text;
-      if (content) return parseAIJson(content);
-    } catch (e) {}
+      const content = result?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (content) return assertGraphResult(parseAIJson(content), zipName || 'ZIP Import');
+    } catch (e) { console.warn("Vertex AI failed:", e?.message || e); }
   }
 
   if (ai) {
-    const model = ai.getGenerativeModel({ model: SEARCH_MODEL });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    return parseAIJson(text);
+    return assertGraphResult(await callGeminiApi(prompt), zipName || 'ZIP Import');
   }
   throw new Error("No AI available for ZIP analysis");
 }
