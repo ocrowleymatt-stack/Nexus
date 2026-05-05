@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Loader2, Cpu, Globe, Database, FileUp, UploadCloud, Archive, Box, CheckCircle, ShieldCheck } from 'lucide-react';
 import Papa from 'papaparse';
@@ -18,6 +18,23 @@ interface SearchOverlayProps {
   error: string | null;
   driveToken: string | null;
   onDriveAuth: (token: string) => void;
+}
+
+async function readFileAsText(file: File): Promise<string> {
+  if (typeof file.text === 'function') {
+    try {
+      return await file.text();
+    } catch (error) {
+      console.warn('file.text() failed; falling back to FileReader', error);
+    }
+  }
+
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(reader.error?.message || 'Could not read selected file.'));
+    reader.readAsText(file);
+  });
 }
 
 export const SearchOverlay: React.FC<SearchOverlayProps> = ({ 
@@ -47,21 +64,21 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   const handleAuthorize = () => {
     const clientId = (import.meta as any).env.VITE_GOOGLE_CLIENT_ID;
     if (!clientId) {
-      alert("Google Client ID not configured in environment.");
+      alert('Google Client ID not configured in environment.');
       return;
     }
 
-    const scope = "https://www.googleapis.com/auth/drive.readonly";
+    const scope = 'https://www.googleapis.com/auth/drive.readonly';
     const redirectUri = window.location.origin;
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${encodeURIComponent(scope)}`;
     
-    const popup = window.open(authUrl, "_blank", "width=600,height=600");
+    const popup = window.open(authUrl, '_blank', 'width=600,height=600');
     
     const interval = setInterval(() => {
       try {
         if (popup?.location.hash) {
           const params = new URLSearchParams(popup.location.hash.substring(1));
-          const token = params.get("access_token");
+          const token = params.get('access_token');
           if (token) {
             onDriveAuth(token);
             clearInterval(interval);
@@ -77,21 +94,25 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   };
 
   const parseCsvFile = async (file: File) => {
-    const csvText = await file.text();
+    const csvText = await readFileAsText(file);
 
     if (!csvText.trim()) {
-      throw new Error('CSV file is empty.');
+      throw new Error('CSV file is empty or could not be read by the browser.');
     }
 
     const results = Papa.parse<Record<string, unknown>>(csvText, {
       header: true,
-      skipEmptyLines: true,
-      dynamicTyping: false
+      skipEmptyLines: 'greedy',
+      dynamicTyping: false,
+      transformHeader: (header) => String(header || '').trim()
     });
 
     if (results.errors.length > 0) {
-      const firstError = results.errors[0];
-      throw new Error(`CSV parse failed near row ${firstError.row ?? 'unknown'}: ${firstError.message}`);
+      const fatalErrors = results.errors.filter((csvError) => csvError.code !== 'TooFewFields');
+      if (fatalErrors.length > 0) {
+        const firstError = fatalErrors[0];
+        throw new Error(`CSV parse failed near row ${firstError.row ?? 'unknown'}: ${firstError.message}`);
+      }
     }
 
     const rows = Array.isArray(results.data) ? results.data : [];
@@ -109,11 +130,12 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
     setLocalError(null);
 
     try {
-      const fileName = file.name.toLowerCase();
+      const fileName = String(file.name || '').toLowerCase();
+      const fileType = String(file.type || '').toLowerCase();
 
-      if (fileName.endsWith('.csv')) {
+      if (fileName.endsWith('.csv') || fileType.includes('csv') || fileType.includes('text/plain')) {
         await parseCsvFile(file);
-      } else if (fileName.endsWith('.zip')) {
+      } else if (fileName.endsWith('.zip') || fileType.includes('zip')) {
         const metadata = await analyzeZipFile(file);
         const samples: { [path: string]: string } = {};
         
@@ -124,7 +146,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
 
         onZipUpload(file.name, metadata.fileTree, samples);
       } else {
-        throw new Error('Unsupported file type. Upload a .csv or .zip file.');
+        throw new Error(`Unsupported file type: ${file.name || file.type || 'unknown'}. Upload a .csv or .zip file.`);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'File upload failed.';
@@ -155,7 +177,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-white tracking-tight">Nexus Narrative Explorer</h1>
-                <p className="text-xs font-mono text-white/30 uppercase tracking-widest mt-1">Grounded Deep Search v1.0.4</p>
+                <p className="text-xs font-mono text-white/30 uppercase tracking-widest mt-1">Grounded Deep Search v1.0.5</p>
               </div>
             </div>
             
@@ -266,7 +288,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                     Selective Upload
                     <input 
                       type="file" 
-                      accept={mode === 'csv' ? '.csv,text/csv' : '.zip,application/zip'} 
+                      accept={mode === 'csv' ? '.csv,text/csv,text/plain' : '.zip,application/zip,application/x-zip-compressed'} 
                       className="hidden" 
                       onChange={(e) => {
                         const selectedFile = e.target.files?.[0];
@@ -303,8 +325,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 </h3>
                 <p className="text-xs text-white/40 mb-8 font-mono uppercase px-12 leading-relaxed">
                   {driveToken 
-                    ? "Deep search will now automatically crawl your connected drive for matching intelligence files."
-                    : "Direct connection to Google Drive for automated intelligence harvesting and metadata hunting."}
+                    ? 'Deep search will now automatically crawl your connected drive for matching intelligence files.'
+                    : 'Direct connection to Google Drive for automated intelligence harvesting and metadata hunting.'}
                 </p>
                 
                 {driveToken ? (
