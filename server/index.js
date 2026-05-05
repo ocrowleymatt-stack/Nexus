@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { createServer as createViteServer } from 'vite'
 import ingest from './routes/ingest.js'
 import aiRoutes from './routes/ai.js'
 
@@ -10,32 +11,51 @@ const __dirname = path.dirname(__filename)
 
 async function startServer() {
   const app = express()
-
-  // 🔥 FIX: Cloud Run requires PORT env
-  const PORT = process.env.PORT || 8080
+  const PORT = 3000 // Fixed for AI Studio environment
 
   app.use(cors())
-  app.use(express.json({ limit: '500mb' }))
-  app.use(express.urlencoded({ extended: true, limit: '500mb' }))
+  app.use(express.json({ limit: '2048mb' }))
+  app.use(express.urlencoded({ extended: true, limit: '2048mb' }))
 
+  // Request logging
+  app.use((req, res, next) => {
+    console.log(`[SERVER] ${req.method} ${req.url}`);
+    next();
+  });
+
+  // 🔥 Ensure API routes ALWAYS come before static/Vite middleware
   app.get('/health', (_req, res) => {
     res.json({ ok: true, service: 'nexus', runtime: 'cloud-run' })
   })
 
-  // 🔥 Ensure API routes ALWAYS come before static
   app.use('/ingest', ingest)
   app.use('/api/ai', aiRoutes)
 
-  // 🔥 Production static handling
-  const distPath = path.join(__dirname, '..', 'dist')
-  app.use(express.static(distPath))
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    })
+    app.use(vite.middlewares)
+  } else {
+    const distPath = path.join(__dirname, '..', 'dist')
+    app.use(express.static(distPath))
+  }
 
-  // 🔥 Only fallback for NON-API routes
+  // 🔥 Catch-all for SPA: Only fallback for NON-API routes
   app.get('*', (req, res) => {
-    if (req.path.startsWith('/api')) {
+    if (req.path.startsWith('/api') || req.path.startsWith('/ingest')) {
       return res.status(404).json({ error: 'API route not found' })
     }
-    res.sendFile(path.join(distPath, 'index.html'))
+    
+    if (process.env.NODE_ENV === 'production') {
+      const distPath = path.join(__dirname, '..', 'dist')
+      res.sendFile(path.join(distPath, 'index.html'))
+    } else {
+      // In dev, Vite handles the SPA fallback via its middleware
+      // but we can add an explicit fallback if needed or just let it pass
+      res.status(404).send('Not Found')
+    }
   })
 
   app.listen(PORT, '0.0.0.0', () => {

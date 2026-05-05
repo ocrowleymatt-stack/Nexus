@@ -6,7 +6,7 @@
 export interface Node {
   id: string;
   name: string;
-  type: 'person' | 'organization' | 'event' | 'platform' | 'location' | 'other';
+  type: 'person' | 'organization' | 'event' | 'platform' | 'location' | 'system' | 'other';
   description?: string;
   val: number; // size for visualization
 }
@@ -26,8 +26,8 @@ export interface NarrativeSection {
 export interface SearchResult {
   nodes: Node[];
   links: Link[];
-  narrative: string;
-  centralNode: string;
+  narrative?: string;
+  centralNode?: string;
 }
 
 export interface AppState {

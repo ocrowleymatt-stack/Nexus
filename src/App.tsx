@@ -1,15 +1,16 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { RotateCcw, Network, FileText, Search as SearchIcon, Compass, LogIn, LogOut, Save, FolderOpen, Plus, Trash2 } from 'lucide-react'
+import { RotateCcw, Network, FileText, Search as SearchIcon, Compass, LogIn, LogOut, Save, FolderOpen, Plus, Trash2, Gavel, Loader2, ShieldAlert, ChevronLeft, ChevronRight, PanelLeftClose, PanelRightClose, PanelLeft, PanelRight, X } from 'lucide-react'
 import IngestToGraphPanel from './components/IngestToGraphPanel'
 import { NetworkMap } from './components/NetworkMap'
 import { SearchOverlay } from './components/SearchOverlay'
-import { deepSearchEntity, extractIntelligenceFromCsv, huntZipIntelligence } from './services/geminiService'
+import { deepSearchEntity, extractIntelligenceFromCsv, huntZipIntelligence, expandGraph, forensicSearchNode, veniceSensemaking, extractIntelligenceFromText } from './services/geminiService'
 import { mergeGraphs } from './lib/intelligenceGraph'
 import { auth, loginWithGoogle } from './lib/firebase'
 import { onAuthStateChanged, User, signOut } from 'firebase/auth'
 import { saveProject, getProjects, deleteProject } from './lib/firestoreService'
 
 import { NarrativeSidebar } from './components/NarrativeSidebar'
+import ReportingDeck from './components/ReportingDeck'
 
 type GraphData = {
   nodes: any[]
@@ -32,14 +33,22 @@ export default function App() {
   const [overlayOpen, setOverlayOpen] = useState(true)
   const [showNarrative, setShowNarrative] = useState(false)
   const [driveToken, setDriveToken] = useState<string | null>(null)
+  const [isVeniceLoading, setIsVeniceLoading] = useState(false)
   
   // Auth & Projects State
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<User | null>(() => {
+    const cached = localStorage.getItem('nexus_user_hint');
+    return cached ? JSON.parse(cached) : null;
+  })
+  const [authLoading, setAuthLoading] = useState(true)
   const [projects, setProjects] = useState<any[]>([])
-  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(() => localStorage.getItem('nexus_curr_pid'))
   const [projectName, setProjectName] = useState('New Investigation')
   const [isSaving, setIsSaving] = useState(false)
-  const [showProjects, setShowProjects] = useState(false)
+  const [activeTab, setActiveTab] = useState<'ingest' | 'projects' | 'reporting'>('ingest')
+  const [autoGrow, setAutoGrow] = useState(false)
+  const [forensicReports, setForensicReports] = useState<Record<string, string>>({})
+  const [loadingForensic, setLoadingForensic] = useState<Record<string, boolean>>({})
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -47,11 +56,14 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u)
       if (u) {
+        localStorage.setItem('nexus_user_hint', JSON.stringify({ uid: u.uid, email: u.email }));
         fetchProjects()
       } else {
+        localStorage.removeItem('nexus_user_hint');
         setProjects([])
-        setCurrentProjectId(null)
+        // We don't clear currentProjectId immediately to allow local-only work
       }
+      setAuthLoading(false)
     })
     return () => unsubscribe()
   }, [])
@@ -60,6 +72,23 @@ export default function App() {
     const list = await getProjects()
     setProjects(list)
   }
+
+  const handleDownloadBackup = () => {
+    const data = {
+      graph,
+      projectName,
+      centralNode,
+      timestamp: new Date().toISOString(),
+      nexus_version: "2.0-clinical"
+    };
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `LOCAL_COPY_${projectName.replace(/\s+/g, '_')}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
 
   const handleSave = async (forceName?: string) => {
     if (!user) return
@@ -107,7 +136,7 @@ export default function App() {
     setProjectName(p.name)
     setCentralNode(p.centralNode)
     setOverlayOpen(false)
-    setShowProjects(false)
+    setActiveTab('ingest')
   }
 
   const handleDeleteProject = async (id: string, e: React.MouseEvent) => {
@@ -134,11 +163,82 @@ export default function App() {
     try {
       const result = await deepSearchEntity(query)
       setGraph(prev => mergeGraphs(prev, result))
-      setCentralNode(result.centralNode)
+      if (result.centralNode) setCentralNode(result.centralNode)
       setOverlayOpen(false)
     } catch (err: any) {
       console.error(err)
       setError(err.message || 'Deep search failed')
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+  const handleExpandGraph = async () => {
+    if (!graph.nodes.length || isSearching) return
+    setIsSearching(true)
+    setError(null)
+    try {
+      const expandedData = await expandGraph(graph)
+      setGraph(prev => mergeGraphs(prev, expandedData))
+    } catch (err: any) {
+      console.error("Expansion failed:", err)
+      setError(`AI was unable to expand the map further. ${err.message || ''}`)
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+  // Auto-Grow Logic
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (autoGrow && graph.nodes.length > 0 && !isSearching) {
+      interval = setInterval(() => {
+        handleExpandGraph();
+      }, 45000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [autoGrow, graph.nodes.length, isSearching]);
+
+  // Local Storage Sync (Local Copy)
+  useEffect(() => {
+    if (graph.nodes.length > 0) {
+      localStorage.setItem('nexus_last_graph', JSON.stringify(graph));
+      localStorage.setItem('nexus_last_project_name', projectName);
+      if (centralNode) localStorage.setItem('nexus_last_central', centralNode);
+    }
+  }, [graph, projectName, centralNode]);
+
+  useEffect(() => {
+    const cachedGraph = localStorage.getItem('nexus_last_graph');
+    const cachedName = localStorage.getItem('nexus_last_project_name');
+    const cachedCentral = localStorage.getItem('nexus_last_central');
+    
+    if (cachedGraph && graph.nodes.length === 0) {
+      try {
+        const parsed = JSON.parse(cachedGraph);
+        setGraph(parsed);
+        if (cachedName) setProjectName(cachedName);
+        if (cachedCentral) setCentralNode(cachedCentral);
+        setOverlayOpen(false); // Close overlay if we have data
+      } catch (e) {
+        console.error("Local cache recovery failed", e);
+      }
+    }
+  }, []);
+
+  const handleTextUpload = async (textData: string) => {
+    setIsSearching(true)
+    setError(null)
+    try {
+      const result = await extractIntelligenceFromText(textData)
+      setGraph(prev => mergeGraphs(prev, result))
+      if (result.centralNode) setCentralNode(result.centralNode)
+      setOverlayOpen(false)
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message || 'Text extraction failed')
     } finally {
       setIsSearching(false)
     }
@@ -150,7 +250,7 @@ export default function App() {
     try {
       const result = await extractIntelligenceFromCsv(csvData)
       setGraph(prev => mergeGraphs(prev, result))
-      setCentralNode(result.centralNode)
+      if (result.centralNode) setCentralNode(result.centralNode)
       setOverlayOpen(false)
     } catch (err: any) {
       console.error(err)
@@ -166,7 +266,7 @@ export default function App() {
     try {
       const result = await huntZipIntelligence(zipName, fileTree, samples)
       setGraph(prev => mergeGraphs(prev, result))
-      setCentralNode(result.centralNode)
+      if (result.centralNode) setCentralNode(result.centralNode)
       setOverlayOpen(false)
     } catch (err: any) {
       console.error(err)
@@ -176,22 +276,92 @@ export default function App() {
     }
   }
 
+  const handleVeniceSensemaking = async () => {
+    setIsVeniceLoading(true)
+    setError(null)
+    try {
+      const refinedData = await veniceSensemaking({
+        nodes: graph.nodes,
+        links: graph.links,
+        narrative: graph.narrative
+      })
+      setGraph(refinedData)
+    } catch (err: any) {
+      console.error(err)
+      setError(err.message || 'Venice Sensemaking failed')
+    } finally {
+      setIsVeniceLoading(false)
+    }
+  }
+
   const handleNodeClick = (node: any) => {
-    setSelectedNode(node)
-    setCentralNode(node.label || node.name || node.id)
+    if (node.id === 'SYSTEM_EXPAND') {
+      handleExpandGraph();
+    } else {
+      setSelectedNode(node)
+      const newCentral = node.label || node.name || node.id
+      if (newCentral) setCentralNode(newCentral)
+      setShowRightSidebar(true) // Force reveal intelligence profile
+    }
+  }
+
+  const handleForensicSearch = async (node: any) => {
+    const nodeId = node.id
+    setLoadingForensic(prev => ({ ...prev, [nodeId]: true }))
+    try {
+      const report = await forensicSearchNode(node.name || node.id)
+      setForensicReports(prev => ({ ...prev, [nodeId]: report }))
+    } catch (err) {
+      console.error(err)
+      setForensicReports(prev => ({ ...prev, [nodeId]: "Forensic search failed or no records accessible." }))
+    } finally {
+      setLoadingForensic(prev => ({ ...prev, [nodeId]: false }))
+    }
   }
 
   const graphForMap = {
     centralNode: centralNode || 'Nexus Intelligence Core',
-    narrative: 'Live source-linked claim graph generated through the ingest pipeline.',
+    narrative: graph.narrative || 'Awaiting investigative ingestion.',
     nodes: graph.nodes,
     links: graph.links
   }
 
+  const [showLeftSidebar, setShowLeftSidebar] = useState(true)
+  const [showRightSidebar, setShowRightSidebar] = useState(false) // Right sidebar hidden by default on mobile
+
   return (
     <div className="relative flex h-screen w-screen bg-[#050505] text-white selection:bg-green-500 selection:text-black overflow-hidden font-sans">
-      <aside className="z-10 w-[360px] shrink-0 border-r border-white/10 bg-black/80 backdrop-blur-xl flex flex-col shadow-2xl">
-        <div className="border-b border-white/10 p-6">
+      {/* Toggle Controls */}
+      <div className="fixed top-24 left-6 z-[60] flex flex-col gap-2">
+        <button 
+          onClick={() => setShowLeftSidebar(!showLeftSidebar)}
+          className={`pointer-events-auto p-3 rounded-2xl bg-[#111] border border-white/10 text-white/50 hover:text-green-500 hover:border-green-500/50 transition-all shadow-2xl flex items-center gap-2 group ${showLeftSidebar ? 'opacity-0 -translate-x-10 pointer-events-none' : 'opacity-100 translate-x-0'}`}
+          title="Toggle Tools"
+        >
+          <PanelLeft size={20} />
+          <span className="text-[10px] font-mono uppercase font-bold pr-2">Investigation Toolbox</span>
+        </button>
+      </div>
+
+      <div className="fixed top-24 right-6 z-[60] flex flex-col gap-2 items-end">
+        <button 
+          onClick={() => {
+            setShowRightSidebar(!showRightSidebar);
+            if (!showRightSidebar && !selectedNode && graph.nodes.length > 0) {
+              setSelectedNode(graph.nodes[0]);
+            }
+          }}
+          className={`pointer-events-auto p-3 rounded-2xl bg-[#111] border border-white/10 text-white/50 hover:text-green-500 hover:border-green-500/50 transition-all shadow-2xl flex items-center gap-2 group ${showRightSidebar ? 'opacity-0 translate-x-10 pointer-events-none' : 'opacity-100 translate-x-0'}`}
+          title="Toggle Intel"
+        >
+          <span className="text-[10px] font-mono uppercase font-bold pl-2">Intel Spotlight</span>
+          <PanelRight size={20} />
+        </button>
+      </div>
+
+      {/* Left Sidebar */}
+      <aside className={`z-40 shrink-0 border-r border-white/10 bg-[#0c0c0c]/95 backdrop-blur-3xl flex flex-col shadow-2xl transition-all duration-500 ease-in-out fixed lg:relative h-full ${showLeftSidebar ? 'w-full lg:w-[400px] translate-x-0' : 'w-0 -translate-x-full overflow-hidden'}`}>
+        <div className="border-b border-white/5 p-8">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3 text-sm font-bold uppercase tracking-widest text-green-500">
               <div className="relative">
@@ -200,23 +370,33 @@ export default function App() {
               </div>
               Nexus
             </div>
-            {user ? (
+            <div className="flex items-center gap-1">
+              {authLoading ? (
+                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+              ) : user ? (
+                <button 
+                  onClick={() => signOut(auth)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/40 hover:text-white"
+                  title="Logout"
+                >
+                  <LogOut size={16} />
+                </button>
+              ) : (
+                <button 
+                  onClick={loginWithGoogle}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"
+                >
+                  <LogIn size={14} />
+                  Login
+                </button>
+              )}
               <button 
-                onClick={() => signOut(auth)}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/40 hover:text-white"
-                title="Logout"
+                onClick={() => setShowLeftSidebar(false)}
+                className="p-2 hover:bg-white/10 rounded-xl text-white/30 hover:text-white transition-colors"
               >
-                <LogOut size={16} />
+                <X size={18} />
               </button>
-            ) : (
-              <button 
-                onClick={loginWithGoogle}
-                className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"
-              >
-                <LogIn size={14} />
-                Login
-              </button>
-            )}
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -227,49 +407,64 @@ export default function App() {
               placeholder="Project Name"
             />
             
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2">
               <button
                 onClick={() => setOverlayOpen(true)}
-                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-green-500 py-3 text-xs font-bold uppercase tracking-widest text-black hover:bg-green-400 active:scale-95 transition-all shadow-[0_0_30px_rgba(34,197,94,0.3)]"
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-green-500 py-3 text-xs font-bold uppercase tracking-widest text-black hover:bg-green-400 active:scale-95 transition-all shadow-[0_0_30px_rgba(34,197,94,0.3)]"
               >
                 <SearchIcon size={14} />
                 Intel Ingest
               </button>
-              <button 
-                disabled={!user || isSaving}
-                onClick={() => handleSave()}
-                className="p-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all disabled:opacity-50"
-                title="Manual Save"
-              >
-                {isSaving ? (
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-                ) : (
-                  <Save size={16} className="text-white/60" />
-                )}
-              </button>
-            </div>
+              
+              <div className="grid grid-cols-3 gap-2">
+                <button 
+                  onClick={() => setActiveTab('ingest')}
+                   className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-[9px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'ingest' ? 'bg-white/20 border-white/40' : 'bg-transparent border-white/10 hover:bg-white/5'}`}
+                >
+                   Ingest
+                </button>
+                <button 
+                  onClick={() => setActiveTab('projects')}
+                  className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-[9px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'projects' ? 'bg-white/20 border-white/40' : 'bg-transparent border-white/10 hover:bg-white/5'}`}
+                >
+                  Vault
+                </button>
+                <button 
+                  onClick={() => setActiveTab('reporting')}
+                  className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-[9px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'reporting' ? 'bg-white/20 border-white/40' : 'bg-transparent border-white/10 hover:bg-white/5'}`}
+                >
+                  Reports
+                </button>
+              </div>
 
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setShowProjects(!showProjects)}
-                className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-[10px] font-bold uppercase tracking-widest border transition-all ${showProjects ? 'bg-white/20 border-white/40' : 'bg-transparent border-white/10 hover:bg-white/5'}`}
-              >
-                <FolderOpen size={14} />
-                {showProjects ? 'Close Projects' : 'My Projects'}
-              </button>
-              <button 
-                onClick={startNewProject}
-                className="p-2.5 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all"
-                title="New Investigation"
-              >
-                <Plus size={16} className="text-white/40" />
-              </button>
+              <div className="flex items-center gap-2 pt-2 border-t border-white/5">
+                <button 
+                  onClick={startNewProject}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-[9px] font-bold uppercase tracking-widest text-white/50 border border-white/5"
+                  title="New Investigation"
+                >
+                  <Plus size={12} />
+                  New Session
+                </button>
+                <button 
+                  disabled={!user || isSaving}
+                  onClick={() => handleSave()}
+                  className="p-2 bg-white/5 hover:bg-white/10 rounded-lg border border-white/5 transition-all disabled:opacity-50"
+                  title="Manual Save"
+                >
+                  {isSaving ? (
+                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                  ) : (
+                    <Save size={14} className="text-white/40" />
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar">
-          {showProjects ? (
+          {activeTab === 'projects' ? (
             <div className="p-6 space-y-4">
               <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-2">Stored Investigations</h3>
               {projects.length === 0 ? (
@@ -297,6 +492,21 @@ export default function App() {
                   </div>
                 ))
               )}
+            </div>
+          ) : activeTab === 'reporting' ? (
+            <div className="p-6">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-6">Reporting & Artifacts</h3>
+              <ReportingDeck 
+                graph={graph} 
+                projectName={projectName} 
+                onExpand={handleExpandGraph}
+                isExpanding={isSearching}
+                autoGrow={autoGrow}
+                onToggleAutoGrow={setAutoGrow}
+                handleDownloadBackup={handleDownloadBackup}
+                onVeniceSensemaking={handleVeniceSensemaking}
+                isVeniceLoading={isVeniceLoading}
+              />
             </div>
           ) : (
             <IngestToGraphPanel setGraph={setGraph} />
@@ -334,6 +544,7 @@ export default function App() {
           <NetworkMap
             data={graphForMap as any}
             onNodeClick={handleNodeClick}
+            selectedNode={selectedNode}
           />
         ) : (
           <div className="flex h-full items-center justify-center">
@@ -345,12 +556,23 @@ export default function App() {
         )}
       </main>
 
-      <aside className="z-10 w-[380px] shrink-0 border-l border-white/10 bg-black/80 p-6 backdrop-blur-xl flex flex-col shadow-[-20px_0_40px_rgba(0,0,0,0.5)]">
-        <div className="flex items-center justify-between">
+      <aside className={`z-40 shrink-0 border-l border-white/10 bg-black/90 p-0 backdrop-blur-xl flex flex-col shadow-[-20px_0_40px_rgba(0,0,0,0.5)] transition-all duration-500 ease-in-out absolute lg:relative right-0 h-full ${showRightSidebar || (selectedNode && !showLeftSidebar) ? 'w-[320px] lg:w-[380px] translate-x-0 p-6 pt-20' : 'w-0 translate-x-full overflow-hidden border-none'}`}>
+        <div className="flex items-start justify-between">
           <h2 className="text-[10px] font-bold uppercase tracking-widest text-white/30">Intelligence Profile</h2>
-          {selectedNode && (
-            <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,1)]" />
-          )}
+          <div className="flex items-center gap-2">
+            {selectedNode && (
+              <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,1)]" />
+            )}
+            <button 
+              onClick={() => {
+                setShowRightSidebar(false);
+                setSelectedNode(null);
+              }}
+              className="p-2 hover:bg-white/10 rounded-xl text-white/30 hover:text-white transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
         
         {selectedNode ? (
@@ -398,6 +620,33 @@ export default function App() {
               </div>
             )}
 
+            <div className="pt-4 border-t border-white/5 space-y-4">
+              <button
+                onClick={() => handleForensicSearch(selectedNode)}
+                disabled={loadingForensic[selectedNode.id]}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-red-500/10 border border-red-500/20 py-3 text-[10px] font-mono uppercase text-red-500 hover:bg-red-500/20 transition-all disabled:opacity-50"
+              >
+                {loadingForensic[selectedNode.id] ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Gavel size={14} />
+                )}
+                Legal/Forensic Deep Dive
+              </button>
+
+              {forensicReports[selectedNode.id] && (
+                <div className="p-4 bg-red-500/5 border border-red-500/10 rounded-2xl space-y-3">
+                  <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-red-500">
+                    <ShieldAlert size={12} />
+                    Forensic Spotlight
+                  </div>
+                  <div className="text-[11px] text-white/60 leading-relaxed font-sans whitespace-pre-wrap">
+                    {forensicReports[selectedNode.id]}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => handleNodeClick(selectedNode)}
               className="w-full flex items-center justify-center gap-2 rounded-xl border border-green-500/30 py-3 text-[10px] font-mono uppercase text-green-500 hover:bg-green-500/10 transition-all active:scale-95"
@@ -435,6 +684,8 @@ export default function App() {
           onSearch={handleDeepSearch}
           onCsvUpload={handleCsvUpload}
           onZipUpload={handleZipUpload}
+          onTextUpload={handleTextUpload}
+          onClose={() => setOverlayOpen(false)}
         />
       )}
 

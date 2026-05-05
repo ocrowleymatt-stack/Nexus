@@ -4,8 +4,39 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nexus Narrative Explorer</title>
+    <style>
+      #global-error-screen {
+        display: none;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: #990000;
+        color: white;
+        padding: 2rem;
+        font-family: monospace;
+        z-index: 999999;
+        white-space: pre-wrap;
+        overflow: auto;
+      }
+    </style>
+    <script>
+      window.addEventListener('error', function(e) {
+        var el = document.getElementById('global-error-screen');
+        if (el) {
+          el.style.display = 'block';
+          el.innerText = "Fatal Error:\n" + e.message + "\n" + e.filename + ":" + e.lineno + "\n\nStack:\n" + (e.error ? e.error.stack : 'No stack');
+        }
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var el = document.getElementById('global-error-screen');
+        if (el) {
+          el.style.display = 'block';
+          el.innerText = "Unhandled Promise Rejection:\n" + e.reason;
+        }
+      });
+    </script>
   </head>
   <body>
+    <div id="global-error-screen"></div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -3,11 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { SearchResult } from '../types';
-import { X, Search, Info, ShieldAlert } from 'lucide-react';
+import { X, Search, Info, ShieldAlert, Gavel, Loader2 } from 'lucide-react';
+import { forensicSearchNode } from '../services/geminiService';
 
 interface NarrativeSidebarProps {
   data: SearchResult;
@@ -15,17 +16,36 @@ interface NarrativeSidebarProps {
 }
 
 export const NarrativeSidebar: React.FC<NarrativeSidebarProps> = ({ data, onClose }) => {
+  const [forensicReports, setForensicReports] = useState<Record<string, string>>({});
+  const [loadingNodes, setLoadingNodes] = useState<Record<string, boolean>>({});
+
+  const handleForensicSearch = async (nodeId: string, nodeName: string) => {
+    setLoadingNodes(prev => ({ ...prev, [nodeId]: true }));
+    try {
+      const report = await forensicSearchNode(nodeName || nodeId);
+      setForensicReports(prev => ({ ...prev, [nodeId]: report }));
+    } catch (err) {
+      console.error(err);
+      setForensicReports(prev => ({ ...prev, [nodeId]: "Search failed or no records accessible." }));
+    } finally {
+      setLoadingNodes(prev => ({ ...prev, [nodeId]: false }));
+    }
+  };
+
   return (
     <motion.div
       initial={{ x: '100%' }}
       animate={{ x: 0 }}
       exit={{ x: '100%' }}
-      className="absolute right-0 top-0 h-full w-full md:w-[450px] bg-[#0c0c0c] border-l border-white/10 z-30 flex flex-col shadow-2xl"
+      className="absolute right-0 top-0 h-full w-full md:w-[450px] bg-[#0c0c0c] border-l border-white/10 z-[80] flex flex-col shadow-2xl"
     >
-      <div className="p-6 border-b border-white/5 flex justify-between items-center bg-[#111]">
+      <div className="p-6 pt-20 border-b border-white/5 flex justify-between items-start bg-[#111]">
         <div>
-          <h3 className="text-xs font-mono text-white/40 uppercase tracking-widest">Case Profile</h3>
-          <h2 className="text-xl font-bold mt-1 text-white">{data.centralNode}</h2>
+          <h2 className="text-xl font-bold text-white">{data.centralNode}</h2>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">Active Intelligence Case</span>
+          </div>
         </div>
         <button 
           onClick={onClose}
@@ -51,22 +71,56 @@ export const NarrativeSidebar: React.FC<NarrativeSidebarProps> = ({ data, onClos
             <Search size={14} className="text-green-500" />
             <h4 className="text-xs font-mono uppercase tracking-wider text-green-500">Entity Connections</h4>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-4">
             {data.nodes.map(node => (
-              <div key={node.id} className="p-4 bg-white/5 border border-white/5 rounded hover:border-white/20 transition-all group">
+              <div key={node.id} className="p-4 bg-white/5 border border-white/5 rounded-xl hover:border-white/20 transition-all group">
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-xs font-mono text-white/80 group-hover:text-white">{node.name}</span>
+                  <span className="text-xs font-mono text-white/80 group-hover:text-white">{node.name || node.id}</span>
                   <span className={ `text-[9px] px-1.5 py-0.5 rounded uppercase font-mono ${
                     node.type === 'person' ? 'bg-blue-500/20 text-blue-400' :
                     node.type === 'organization' ? 'bg-red-500/20 text-red-400' :
                     'bg-white/10 text-white/40'
-                  }`}>
+                   }`}>
                     {node.type}
                   </span>
                 </div>
+                
                 {node.description && (
-                  <p className="text-xs text-white/40 leading-relaxed font-sans">{node.description}</p>
+                  <p className="text-[11px] text-white/40 leading-relaxed font-sans mb-3">{node.description}</p>
                 )}
+
+                <div className="pt-2 border-t border-white/5 space-y-3">
+                  <button
+                    onClick={() => handleForensicSearch(node.id, node.name || node.id)}
+                    disabled={loadingNodes[node.id]}
+                    className="flex items-center gap-2 text-[9px] font-mono uppercase tracking-widest text-red-500/70 hover:text-red-400 transition-colors disabled:opacity-50"
+                  >
+                    {loadingNodes[node.id] ? (
+                      <Loader2 size={10} className="animate-spin" />
+                    ) : (
+                      <Gavel size={10} />
+                    )}
+                    Legal/Forensic Deep Dive
+                  </button>
+
+                  <AnimatePresence>
+                    {forensicReports[node.id] && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        className="p-3 bg-red-500/5 border border-red-500/10 rounded-lg"
+                      >
+                        <div className="flex items-center gap-2 mb-2 text-[8px] font-bold uppercase tracking-widest text-red-500">
+                          <ShieldAlert size={10} />
+                          Legal Nexus Spotlight
+                        </div>
+                        <div className="text-[10px] text-white/60 leading-relaxed prose prose-invert prose-xs">
+                          <ReactMarkdown>{forensicReports[node.id]}</ReactMarkdown>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               </div>
             ))}
           </div>
