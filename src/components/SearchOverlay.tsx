@@ -32,15 +32,18 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<'guide' | 'search' | 'csv' | 'zip' | 'drive'>('guide');
   const [isDragging, setIsDragging] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const displayError = localError || error;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setLocalError(null);
     if (query.trim() && !isSearching) {
       onSearch(query.trim());
     }
   };
 
-  // Simple Google OAuth Popup
   const handleAuthorize = () => {
     const clientId = (import.meta as any).env.VITE_GOOGLE_CLIENT_ID;
     if (!clientId) {
@@ -50,11 +53,10 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
 
     const scope = "https://www.googleapis.com/auth/drive.readonly";
     const redirectUri = window.location.origin;
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${scope}`;
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${encodeURIComponent(scope)}`;
     
     const popup = window.open(authUrl, "_blank", "width=600,height=600");
     
-    // Listen for the token in the fragment
     const interval = setInterval(() => {
       try {
         if (popup?.location.hash) {
@@ -68,35 +70,65 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
           }
         }
       } catch (e) {
-        // Cross-origin might throw until the popup redirects back to redirectUri
+        // Cross-origin might throw until the popup redirects back to redirectUri.
       }
       if (popup?.closed) clearInterval(interval);
     }, 500);
   };
 
-  const handleFile = useCallback(async (file: File) => {
-    if (file.name.endsWith('.csv')) {
-      Papa.parse(file, {
-        complete: (results) => {
-          // Robust handling: slice data if it's massive to avoid string length limits
-          const dataToIngest = results.data.length > 20000 ? results.data.slice(0, 20000) : results.data;
-          const csvString = JSON.stringify(dataToIngest);
-          onCsvUpload(csvString);
-        },
-        header: true,
-        skipEmptyLines: true
-      });
-    } else if (file.name.endsWith('.zip')) {
-      const metadata = await analyzeZipFile(file);
-      const samples: { [path: string]: string } = {};
-      
-      // Grab top 3 interesting files for intelligence sampling
-      for (const path of metadata.interestingFiles.slice(0, 3)) {
-        const content = await getZipFileContent(file, path);
-        if (content) samples[path] = content;
-      }
+  const parseCsvFile = async (file: File) => {
+    const csvText = await file.text();
 
-      onZipUpload(file.name, metadata.fileTree, samples);
+    if (!csvText.trim()) {
+      throw new Error('CSV file is empty.');
+    }
+
+    const results = Papa.parse<Record<string, unknown>>(csvText, {
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: false
+    });
+
+    if (results.errors.length > 0) {
+      const firstError = results.errors[0];
+      throw new Error(`CSV parse failed near row ${firstError.row ?? 'unknown'}: ${firstError.message}`);
+    }
+
+    const rows = Array.isArray(results.data) ? results.data : [];
+    const populatedRows = rows.filter((row) => Object.values(row || {}).some((value) => String(value ?? '').trim() !== ''));
+
+    if (populatedRows.length === 0) {
+      throw new Error('CSV parsed successfully but contained no usable rows.');
+    }
+
+    const dataToIngest = populatedRows.length > 20000 ? populatedRows.slice(0, 20000) : populatedRows;
+    onCsvUpload(JSON.stringify(dataToIngest));
+  };
+
+  const handleFile = useCallback(async (file: File) => {
+    setLocalError(null);
+
+    try {
+      const fileName = file.name.toLowerCase();
+
+      if (fileName.endsWith('.csv')) {
+        await parseCsvFile(file);
+      } else if (fileName.endsWith('.zip')) {
+        const metadata = await analyzeZipFile(file);
+        const samples: { [path: string]: string } = {};
+        
+        for (const path of metadata.interestingFiles.slice(0, 3)) {
+          const content = await getZipFileContent(file, path);
+          if (content) samples[path] = content;
+        }
+
+        onZipUpload(file.name, metadata.fileTree, samples);
+      } else {
+        throw new Error('Unsupported file type. Upload a .csv or .zip file.');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'File upload failed.';
+      setLocalError(message);
     }
   }, [onCsvUpload, onZipUpload]);
 
@@ -128,48 +160,27 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
             </div>
             
             <div className="flex bg-white/5 p-1 rounded-lg border border-white/10 overflow-x-auto max-w-[300px] md:max-w-none">
-              <button 
-                onClick={() => setMode('guide')}
-                className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'guide' ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
-              >
-                Guide
-              </button>
-              <button 
-                onClick={() => setMode('search')}
-                className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'search' ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
-              >
-                Search
-              </button>
-              <button 
-                onClick={() => setMode('csv')}
-                className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'csv' ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
-              >
-                CSV
-              </button>
-              <button 
-                onClick={() => setMode('zip')}
-                className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'zip' ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
-              >
-                ZIP
-              </button>
-              <button 
-                onClick={() => setMode('drive')}
-                className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'drive' ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
-              >
-                Drive
-              </button>
+              {(['guide', 'search', 'csv', 'zip', 'drive'] as const).map((tab) => (
+                <button 
+                  key={tab}
+                  onClick={() => { setLocalError(null); setMode(tab); }}
+                  className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === tab ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
+                >
+                  {tab}
+                </button>
+              ))}
             </div>
           </div>
 
             <AnimatePresence mode="wait">
-              {error && (
+              {displayError && (
                 <motion.div 
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-3 text-red-500 text-xs font-mono"
                 >
                   <Database size={16} />
-                  <span>Error: {error}</span>
+                  <span>Error: {displayError}</span>
                 </motion.div>
               )}
               {mode === 'guide' ? (
@@ -255,9 +266,13 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                     Selective Upload
                     <input 
                       type="file" 
-                      accept={mode === 'csv' ? '.csv' : '.zip'} 
+                      accept={mode === 'csv' ? '.csv,text/csv' : '.zip,application/zip'} 
                       className="hidden" 
-                      onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+                      onChange={(e) => {
+                        const selectedFile = e.target.files?.[0];
+                        if (selectedFile) handleFile(selectedFile);
+                        e.currentTarget.value = '';
+                      }}
                     />
                   </label>
                 </div>
@@ -338,11 +353,11 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                     </>
                   ) : (
                     <>
-                      <ProgressStep icon={<FileUp size={14} />} text="Parsing CSV structure and column metadata..." active />
+                      <ProgressStep icon={<FileUp size={14} />} text="Parsing file structure and source metadata..." active />
                       <ProgressStep icon={<Cpu size={14} />} text="Extracting entity vectors and link probability..." active />
                     </>
                   )}
-                  <ProgressStep icon={<Cpu size={14} />} text="Synthesizing narratives via Gemini 3.1..." active />
+                  <ProgressStep icon={<Cpu size={14} />} text="Synthesising narratives via Gemini..." active />
                 </div>
               </motion.div>
             )}
