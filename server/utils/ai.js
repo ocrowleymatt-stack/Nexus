@@ -8,7 +8,7 @@ if (process.env.GEMINI_API_KEY) {
   ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 }
 
-const SEARCH_MODEL = "gemini-3-flash-preview";
+const SEARCH_MODEL = "gemini-2.5-flash";
 
 export async function callVeniceAI(prompt) {
   const apiKey = process.env.Venice || process.env.VENICE_API_KEY;
