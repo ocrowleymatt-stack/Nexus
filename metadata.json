@@ -1,5 +1,5 @@
 {
-  "name": "Nexus Narrative Explorer",
+  "name": "Nexus",
   "description": "An investigative tool that uses deep web search and AI grounding to map hidden connections and build comprehensive narratives for any specified entity.",
   "requestFramePermissions": [],
   "majorCapabilities": ["AI-powered network mapping", "Google Search grounded analysis", "Interactive relationship visualization"]

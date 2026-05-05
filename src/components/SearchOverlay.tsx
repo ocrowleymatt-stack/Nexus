@@ -5,7 +5,7 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Loader2, Cpu, Globe, Database, FileUp, UploadCloud, Archive, Box, CheckCircle, ShieldCheck, X } from 'lucide-react';
+import { Search, Loader2, Cpu, Globe, Database, FileUp, UploadCloud, Archive, Box, CheckCircle, ShieldCheck, Shield, X } from 'lucide-react';
 import Papa from 'papaparse';
 import { analyzeZipFile, getZipFileContent } from '../services/zipService';
 
@@ -78,12 +78,15 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   };
 
   const handleFile = useCallback(async (file: File) => {
+    console.log(`[CLIENT] Handling file upload: ${file.name} (${file.size} bytes)`);
     if (file.name.endsWith('.csv')) {
       Papa.parse(file, {
         complete: (results) => {
           // Robust handling: slice data if it's massive to avoid string length limits
-          const dataToIngest = results.data.length > 20000 ? results.data.slice(0, 20000) : results.data;
-          const csvString = JSON.stringify(dataToIngest);
+          const dataToIngest = results.data.length > 5000 ? results.data.slice(0, 5000) : results.data;
+          
+          // Convert back to CSV string
+          const csvString = Papa.unparse(dataToIngest);
           onCsvUpload(csvString);
         },
         header: true,
@@ -129,35 +132,38 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
         <div className="p-8">
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-green-500/10 rounded-lg">
-                <Cpu className="text-green-500" size={24} />
+              <div className="p-2 bg-[#d4af37]/10 rounded-lg">
+                <Shield className="text-[#d4af37]" size={24} />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight">Nexus Narrative Explorer</h1>
-                <p className="text-xs font-mono text-white/30 uppercase tracking-widest mt-1">Grounded Deep Search v1.0.4</p>
+                <div className="flex flex-col -mb-1">
+                  <span className="text-[8px] font-mono tracking-[0.4em] text-[#d4af37]/40 uppercase">O'CROWLEY</span>
+                  <h1 className="text-2xl font-serif italic font-black text-white tracking-tighter">Nexus</h1>
+                </div>
+                <p className="text-[9px] font-mono text-white/20 uppercase tracking-[0.2em] mt-0.5">Secure Grounded Protocol // v1.2.0-ADR</p>
               </div>
             </div>
 
             <div className="flex items-center gap-4">
               <div className="flex bg-white/5 p-1 rounded-lg border border-white/10 overflow-x-auto max-w-[200px] md:max-w-none">
-                <button 
-                  onClick={() => setMode('search')}
-                  className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'search' ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
-                >
-                  Search
-                </button>
-                <button 
-                  onClick={() => setMode('file')}
-                  className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'file' ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
-                >
-                  File
-                </button>
-                <button 
-                  onClick={() => setMode('drive')}
-                  className={`px-3 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'drive' ? 'bg-green-500 text-black' : 'text-white/40 hover:text-white'}`}
-                >
-                  Drive
-                </button>
+                  <button 
+                    onClick={() => setMode('search')}
+                    className={`px-4 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'search' ? 'bg-[#d4af37] text-black font-bold' : 'text-white/40 hover:text-white'}`}
+                  >
+                    Investigate
+                  </button>
+                  <button 
+                    onClick={() => setMode('file')}
+                    className={`px-4 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'file' ? 'bg-[#d4af37] text-black font-bold' : 'text-white/40 hover:text-white'}`}
+                  >
+                    Dossier
+                  </button>
+                  <button 
+                    onClick={() => setMode('drive')}
+                    className={`px-4 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'drive' ? 'bg-[#d4af37] text-black font-bold' : 'text-white/40 hover:text-white'}`}
+                  >
+                    Vault
+                  </button>
               </div>
 
               {onClose && (
@@ -197,13 +203,13 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder="Enter target node (Person, Org, Alias...)"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-5 text-lg text-white placeholder:text-white/20 focus:outline-none focus:border-green-500/50 transition-all font-sans pr-16"
+                    className="w-full bg-white/[0.02] border border-white/5 rounded-xl px-6 py-6 text-xl text-white placeholder:text-white/10 focus:outline-none focus:border-[#d4af37]/40 transition-all font-serif italic pr-16"
                     disabled={isSearching}
                   />
                   <button 
                     type="submit"
                     disabled={isSearching || !query.trim()}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-3 bg-green-500 text-black rounded-lg hover:bg-green-400 disabled:opacity-50 disabled:bg-white/10 disabled:text-white/30 transition-all shadow-[0_0_20px_rgba(34,197,94,0.3)] disabled:shadow-none"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-3 bg-[#d4af37] text-black rounded-lg hover:bg-[#eab308] disabled:opacity-50 disabled:bg-white/10 disabled:text-white/30 transition-all shadow-[0_0_20px_rgba(212,175,55,0.3)] disabled:shadow-none"
                   >
                     {isSearching ? <Loader2 className="animate-spin" size={20} /> : <Search size={20} />}
                   </button>
@@ -215,7 +221,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                     <button 
                       key={ex}
                       onClick={() => setQuery(ex)}
-                      className="text-[10px] font-mono text-white/40 hover:text-green-500 transition-colors uppercase"
+                      className="text-[10px] font-mono text-white/40 hover:text-[#d4af37] transition-colors uppercase"
                     >
                       [{ex}]
                     </button>
@@ -233,9 +239,9 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                   onDragLeave={() => setIsDragging(false)}
                   onDrop={onDrop}
-                  className={`border-2 border-dashed rounded-2xl p-12 flex flex-col items-center justify-center transition-all ${isDragging ? 'border-green-500 bg-green-500/10' : 'border-white/10 bg-white/5 hover:border-white/20'}`}
+                  className={`border-2 border-dashed rounded-2xl p-12 flex flex-col items-center justify-center transition-all ${isDragging ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-white/10 bg-white/5 hover:border-white/20'}`}
                 >
-                  <div className={`p-4 rounded-full mb-4 transition-all ${isDragging ? 'bg-green-500 text-black' : 'bg-white/5 text-white/20'}`}>
+                  <div className={`p-4 rounded-full mb-4 transition-all ${isDragging ? 'bg-[#d4af37] text-black' : 'bg-white/5 text-white/20'}`}>
                     <UploadCloud size={32} />
                   </div>
                   <h3 className="text-sm font-bold text-white mb-1">
@@ -271,11 +277,11 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 animate={{ opacity: 1, scale: 1 }}
                 className="p-12 border border-white/5 rounded-2xl bg-white/5 text-center"
               >
-                <div className={`p-4 rounded-full w-fit mx-auto mb-4 ${driveToken ? 'bg-green-500/10 text-green-500' : 'bg-blue-500/10 text-blue-500'}`}>
+                <div className={`p-4 rounded-full w-fit mx-auto mb-4 ${driveToken ? 'bg-[#d4af37]/10 text-[#d4af37]' : 'bg-blue-500/10 text-blue-500'}`}>
                   {driveToken ? <ShieldCheck size={32} /> : <Box size={32} />}
                 </div>
                 <h3 className="text-sm font-bold text-white mb-2">
-                  {driveToken ? 'Google Drive Connected' : 'Google Drive Integration'}
+                  {driveToken ? 'Secure Repository Connected' : 'Google Drive Integration'}
                 </h3>
                 <p className="text-xs text-white/40 mb-8 font-mono uppercase px-12 leading-relaxed">
                   {driveToken 
@@ -285,9 +291,9 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 
                 {driveToken ? (
                    <div className="flex flex-col items-center gap-4">
-                      <div className="flex items-center gap-2 px-4 py-2 bg-green-500/10 border border-green-500/20 rounded-lg">
-                        <CheckCircle size={14} className="text-green-500" />
-                        <span className="text-[10px] font-mono uppercase text-green-500">Automated Scan Active</span>
+                    <div className="flex items-center gap-2 px-4 py-2 bg-[#d4af37]/10 border border-[#d4af37]/20 rounded-lg">
+                        <CheckCircle size={14} className="text-[#d4af37]" />
+                        <span className="text-[10px] font-mono uppercase text-[#d4af37]">Automated Scan Active</span>
                       </div>
                       <button 
                         onClick={() => setMode('search')}
@@ -316,7 +322,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 exit={{ opacity: 0, scale: 0.95 }}
                 className="mt-8 space-y-4"
               >
-                <div className="flex items-center gap-4 text-xs font-mono text-green-500 uppercase tracking-widest">
+                <div className="flex items-center gap-4 text-xs font-mono text-[#d4af37] uppercase tracking-widest">
                   <span className="flex-1">{mode === 'search' ? 'Deep Research in Progress' : 'Smart Extraction Active'}</span>
                   <span className="animate-pulse">Active</span>
                 </div>
@@ -350,7 +356,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
 };
 
 const ProgressStep = ({ icon, text, active }: { icon: React.ReactNode, text: string, active?: boolean }) => (
-  <div className={`flex items-center gap-3 p-3 rounded-lg border ${active ? 'bg-green-500/5 border-green-500/10 text-green-500/70' : 'bg-white/5 border-white/5 text-white/30'}`}>
+  <div className={`flex items-center gap-3 p-3 rounded-lg border ${active ? 'bg-[#d4af37]/5 border-[#d4af37]/10 text-[#d4af37]/70' : 'bg-white/5 border-white/5 text-white/30'}`}>
     {icon}
     <span className="text-[10px] font-mono uppercase tracking-tighter">{text}</span>
     {active && <Loader2 className="ml-auto animate-spin" size={12} />}

@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename)
 
 async function startServer() {
   const app = express()
-  const PORT = 3000 // Fixed for AI Studio environment
+  const PORT = process.env.PORT || 3000;
 
   app.use(cors())
   app.use(express.json({ limit: '2048mb' }))

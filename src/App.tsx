@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { RotateCcw, Network, FileText, Search as SearchIcon, Compass, LogIn, LogOut, Save, FolderOpen, Plus, Trash2, Gavel, Loader2, ShieldAlert, ChevronLeft, ChevronRight, PanelLeftClose, PanelRightClose, PanelLeft, PanelRight, X } from 'lucide-react'
+import { RotateCcw, Network, FileText, Database, Search as SearchIcon, Compass, LogIn, LogOut, Save, FolderOpen, Plus, Trash2, Gavel, Loader2, ShieldAlert, Shield, ChevronLeft, ChevronRight, PanelLeftClose, PanelRightClose, PanelLeft, PanelRight, X } from 'lucide-react'
 import IngestToGraphPanel from './components/IngestToGraphPanel'
 import { NetworkMap } from './components/NetworkMap'
 import { SearchOverlay } from './components/SearchOverlay'
@@ -11,6 +11,10 @@ import { saveProject, getProjects, deleteProject } from './lib/firestoreService'
 
 import { NarrativeSidebar } from './components/NarrativeSidebar'
 import ReportingDeck from './components/ReportingDeck'
+import VisualSettingsPanel from './components/VisualSettingsPanel'
+import ImportDeck from './components/ImportDeck'
+import { VisualSettings } from './types'
+import { NexusGraph } from './types/graph'
 
 type GraphData = {
   nodes: any[]
@@ -24,7 +28,15 @@ const initialGraph: GraphData = {
   links: []
 }
 
+const defaultVisualSettings: VisualSettings = {
+  theme: 'default',
+  nodeShape: 'circle',
+  linkStyle: 'default',
+  showDataFlags: true
+}
+
 export default function App() {
+  console.log('[CLIENT] App rendering');
   const [graph, setGraph] = useState<GraphData>(initialGraph)
   const [selectedNode, setSelectedNode] = useState<any | null>(null)
   const [centralNode, setCentralNode] = useState<string | null>(null)
@@ -34,6 +46,10 @@ export default function App() {
   const [showNarrative, setShowNarrative] = useState(false)
   const [driveToken, setDriveToken] = useState<string | null>(null)
   const [isVeniceLoading, setIsVeniceLoading] = useState(false)
+  const [visualSettings, setVisualSettings] = useState<VisualSettings>(() => {
+    const cached = localStorage.getItem('nexus_visual_settings');
+    return cached ? JSON.parse(cached) : defaultVisualSettings;
+  })
   
   // Auth & Projects State
   const [user, setUser] = useState<User | null>(() => {
@@ -45,7 +61,8 @@ export default function App() {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(() => localStorage.getItem('nexus_curr_pid'))
   const [projectName, setProjectName] = useState('New Investigation')
   const [isSaving, setIsSaving] = useState(false)
-  const [activeTab, setActiveTab] = useState<'ingest' | 'projects' | 'reporting'>('ingest')
+  const [showImportDeck, setShowImportDeck] = useState(false)
+  const [activeTab, setActiveTab] = useState<'ingest' | 'projects' | 'reporting' | 'visuals'>('ingest')
   const [autoGrow, setAutoGrow] = useState(false)
   const [forensicReports, setForensicReports] = useState<Record<string, string>>({})
   const [loadingForensic, setLoadingForensic] = useState<Record<string, boolean>>({})
@@ -208,7 +225,8 @@ export default function App() {
       localStorage.setItem('nexus_last_project_name', projectName);
       if (centralNode) localStorage.setItem('nexus_last_central', centralNode);
     }
-  }, [graph, projectName, centralNode]);
+    localStorage.setItem('nexus_visual_settings', JSON.stringify(visualSettings));
+  }, [graph, projectName, centralNode, visualSettings]);
 
   useEffect(() => {
     const cachedGraph = localStorage.getItem('nexus_last_graph');
@@ -248,13 +266,15 @@ export default function App() {
     setIsSearching(true)
     setError(null)
     try {
+      console.log("[CLIENT] Initiating CSV Intelligence Extraction...");
       const result = await extractIntelligenceFromCsv(csvData)
+      console.log("[CLIENT] Extraction Complete. Merging into Graph.");
       setGraph(prev => mergeGraphs(prev, result))
       if (result.centralNode) setCentralNode(result.centralNode)
       setOverlayOpen(false)
     } catch (err: any) {
-      console.error(err)
-      setError(err.message || 'CSV extraction failed')
+      console.error("[CSV_UPLOAD_ERROR]", err);
+      setError(`Intelligence Extraction Failed: ${err.message || 'Unknown server error'}. Check your API keys and try again.`);
     } finally {
       setIsSearching(false)
     }
@@ -330,12 +350,12 @@ export default function App() {
   const [showRightSidebar, setShowRightSidebar] = useState(false) // Right sidebar hidden by default on mobile
 
   return (
-    <div className="relative flex h-screen w-screen bg-[#050505] text-white selection:bg-green-500 selection:text-black overflow-hidden font-sans">
+    <div className="relative flex h-screen w-screen bg-[#050505] text-white selection:bg-[#d4af37] selection:text-black overflow-hidden font-sans">
       {/* Toggle Controls */}
       <div className="fixed top-24 left-6 z-[60] flex flex-col gap-2">
         <button 
           onClick={() => setShowLeftSidebar(!showLeftSidebar)}
-          className={`pointer-events-auto p-3 rounded-2xl bg-[#111] border border-white/10 text-white/50 hover:text-green-500 hover:border-green-500/50 transition-all shadow-2xl flex items-center gap-2 group ${showLeftSidebar ? 'opacity-0 -translate-x-10 pointer-events-none' : 'opacity-100 translate-x-0'}`}
+          className={`pointer-events-auto p-3 rounded-2xl bg-[#111] border border-white/10 text-white/50 hover:text-[#d4af37] hover:border-[#d4af37]/50 transition-all shadow-2xl flex items-center gap-2 group ${showLeftSidebar ? 'opacity-0 -translate-x-10 pointer-events-none' : 'opacity-100 translate-x-0'}`}
           title="Toggle Tools"
         >
           <PanelLeft size={20} />
@@ -351,7 +371,7 @@ export default function App() {
               setSelectedNode(graph.nodes[0]);
             }
           }}
-          className={`pointer-events-auto p-3 rounded-2xl bg-[#111] border border-white/10 text-white/50 hover:text-green-500 hover:border-green-500/50 transition-all shadow-2xl flex items-center gap-2 group ${showRightSidebar ? 'opacity-0 translate-x-10 pointer-events-none' : 'opacity-100 translate-x-0'}`}
+          className={`pointer-events-auto p-3 rounded-2xl bg-[#111] border border-white/10 text-white/50 hover:text-[#d4af37] hover:border-[#d4af37]/50 transition-all shadow-2xl flex items-center gap-2 group ${showRightSidebar ? 'opacity-0 translate-x-10 pointer-events-none' : 'opacity-100 translate-x-0'}`}
           title="Toggle Intel"
         >
           <span className="text-[10px] font-mono uppercase font-bold pl-2">Intel Spotlight</span>
@@ -363,12 +383,25 @@ export default function App() {
       <aside className={`z-40 shrink-0 border-r border-white/10 bg-[#0c0c0c]/95 backdrop-blur-3xl flex flex-col shadow-2xl transition-all duration-500 ease-in-out fixed lg:relative h-full ${showLeftSidebar ? 'w-full lg:w-[400px] translate-x-0' : 'w-0 -translate-x-full overflow-hidden'}`}>
         <div className="border-b border-white/5 p-8">
           <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3 text-sm font-bold uppercase tracking-widest text-green-500">
+            <div className="flex items-center gap-3 font-serif italic text-lg tracking-tighter">
               <div className="relative">
-                <Network size={20} />
-                <div className="absolute inset-0 bg-green-500 blur-md opacity-50" />
+                <div className="w-10 h-10 rounded-full bg-[#d4af37] flex items-center justify-center shadow-[0_0_20px_rgba(212,175,55,0.4)] overflow-hidden border border-white/20">
+                  {/* Persona Face - Amateur Photography Style */}
+                  <img 
+                    src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200&h=200" 
+                    alt="Agent" 
+                    className="w-full h-full object-cover grayscale opacity-80 mix-blend-multiply border-none"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="absolute inset-0 bg-[#d4af37]/20 mix-blend-color" />
+                </div>
+                <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-[#0c0c0c] animate-pulse" title="System Ready" />
               </div>
-              Nexus
+              <div className="flex flex-col">
+                <span className="text-[8px] font-mono tracking-[0.4em] text-white/30 uppercase -mb-1">O'CROWLEY</span>
+                Nexus Agent
+              </div>
+              <span className="text-[9px] font-mono font-normal not-italic text-white/20 bg-white/5 px-2 py-0.5 rounded border border-white/10 ml-2">CORE // 1.2.0-ADR</span>
             </div>
             <div className="flex items-center gap-1">
               {authLoading ? (
@@ -384,10 +417,10 @@ export default function App() {
               ) : (
                 <button 
                   onClick={loginWithGoogle}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all"
+                  className="flex items-center gap-2 px-3 py-1.5 bg-[#d4af37] text-black rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all shadow-[0_0_15px_rgba(212,175,55,0.4)]"
                 >
                   <LogIn size={14} />
-                  Login
+                  ADR Login
                 </button>
               )}
               <button 
@@ -399,41 +432,55 @@ export default function App() {
             </div>
           </div>
 
+          <button
+            onClick={() => setShowImportDeck(true)}
+            className="mt-4 w-full flex items-center justify-center gap-2 rounded-xl bg-[#d4af37]/10 border border-[#d4af37]/30 py-3 text-[10px] font-mono uppercase text-[#d4af37] hover:bg-[#d4af37]/20 transition-all font-bold"
+          >
+            <Database size={14} />
+            Nexus Intelligence Port
+          </button>
+
           <div className="space-y-4">
             <input 
               value={projectName}
               onChange={(e) => setProjectName(e.target.value)}
-              className="w-full bg-transparent border-none text-lg font-black tracking-tight text-white focus:outline-none focus:ring-0 placeholder:text-white/20"
+              className="w-full bg-transparent border-none text-2xl font-serif italic font-black tracking-tight text-[#d4af37] focus:outline-none focus:ring-0 placeholder:text-white/10"
               placeholder="Project Name"
             />
             
             <div className="flex flex-col gap-2">
               <button
                 onClick={() => setOverlayOpen(true)}
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-green-500 py-3 text-xs font-bold uppercase tracking-widest text-black hover:bg-green-400 active:scale-95 transition-all shadow-[0_0_30px_rgba(34,197,94,0.3)]"
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-white/[0.03] border border-white/10 py-4 text-xs font-bold uppercase tracking-[0.2em] text-[#d4af37] hover:bg-white/[0.08] hover:border-[#d4af37]/40 active:scale-[0.98] transition-all group"
               >
                 <SearchIcon size={14} />
                 Intel Ingest
               </button>
               
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-1">
                 <button 
                   onClick={() => setActiveTab('ingest')}
-                   className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-[9px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'ingest' ? 'bg-white/20 border-white/40' : 'bg-transparent border-white/10 hover:bg-white/5'}`}
+                   className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'ingest' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
                 >
-                   Ingest
+                   Index
                 </button>
                 <button 
                   onClick={() => setActiveTab('projects')}
-                  className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-[9px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'projects' ? 'bg-white/20 border-white/40' : 'bg-transparent border-white/10 hover:bg-white/5'}`}
+                  className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'projects' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
                 >
                   Vault
                 </button>
                 <button 
                   onClick={() => setActiveTab('reporting')}
-                  className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-[9px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'reporting' ? 'bg-white/20 border-white/40' : 'bg-transparent border-white/10 hover:bg-white/5'}`}
+                  className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'reporting' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
                 >
-                  Reports
+                  Brief
+                </button>
+                <button 
+                  onClick={() => setActiveTab('visuals')}
+                  className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'visuals' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
+                >
+                  Style
                 </button>
               </div>
 
@@ -477,7 +524,7 @@ export default function App() {
                   <div 
                     key={p.id}
                     onClick={() => loadProject(p)}
-                    className={`group relative p-4 rounded-2xl border transition-all cursor-pointer ${currentProjectId === p.id ? 'bg-green-500/10 border-green-500/30' : 'bg-white/5 border-white/5 hover:border-white/10'}`}
+                    className={`group relative p-4 rounded-2xl border transition-all cursor-pointer ${currentProjectId === p.id ? 'bg-[#d4af37]/10 border-[#d4af37]/30' : 'bg-white/5 border-white/5 hover:border-white/10'}`}
                   >
                     <div className="text-sm font-bold truncate pr-8">{p.name}</div>
                     <div className="text-[10px] font-mono text-white/30 mt-1 uppercase">
@@ -507,6 +554,11 @@ export default function App() {
                 onVeniceSensemaking={handleVeniceSensemaking}
                 isVeniceLoading={isVeniceLoading}
               />
+            </div>
+          ) : activeTab === 'visuals' ? (
+            <div className="p-6">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-6">Visual Configuration</h3>
+              <VisualSettingsPanel settings={visualSettings} onChange={setVisualSettings} />
             </div>
           ) : (
             <IngestToGraphPanel setGraph={setGraph} />
@@ -539,12 +591,13 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="relative flex-1 bg-[radial-gradient(circle_at_center,_rgba(22,163,74,0.05)_0%,_transparent_70%)]">
+      <main className="relative flex-1 bg-[radial-gradient(circle_at_center,_rgba(212,175,55,0.05)_0%,_transparent_70%)]">
         {graph.nodes.length > 0 ? (
           <NetworkMap
             data={graphForMap as any}
             onNodeClick={handleNodeClick}
             selectedNode={selectedNode}
+            visualSettings={visualSettings}
           />
         ) : (
           <div className="flex h-full items-center justify-center">
@@ -561,7 +614,7 @@ export default function App() {
           <h2 className="text-[10px] font-bold uppercase tracking-widest text-white/30">Intelligence Profile</h2>
           <div className="flex items-center gap-2">
             {selectedNode && (
-              <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,1)]" />
+              <div className="h-1.5 w-1.5 rounded-full bg-[#d4af37] animate-pulse shadow-[0_0_10px_rgba(212,175,55,1)]" />
             )}
             <button 
               onClick={() => {
@@ -582,7 +635,7 @@ export default function App() {
                 {selectedNode.label || selectedNode.name || selectedNode.id}
               </div>
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] font-mono uppercase text-white/50 tracking-wider">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500/50" />
+                <span className="w-1.5 h-1.5 rounded-full bg-[#d4af37]/50" />
                 {selectedNode.type || selectedNode.group || 'Identified Entity'}
               </div>
             </div>
@@ -594,7 +647,7 @@ export default function App() {
               </div>
               <div className="flex justify-between">
                 <span>RELIABILITY</span>
-                <span className="text-green-500/70">VERIFIED</span>
+                <span className="text-[#d4af37]/70">VERIFIED</span>
               </div>
             </div>
             
@@ -621,6 +674,18 @@ export default function App() {
             )}
 
             <div className="pt-4 border-t border-white/5 space-y-4">
+              {/* Visual Reconstruction / Evidence Generation */}
+              <button
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#d4af37]/10 border border-[#d4af37]/20 py-3 text-[10px] font-mono uppercase text-[#d4af37] hover:bg-[#d4af37]/20 transition-all"
+                title="Generates a realistic forensic visual of this entity"
+                onClick={() => {
+                  alert("Intelligence protocol initiated. In a production environment, this would generate a high-veracity amateur-style photograph with natural flaws as requested. (Currently bypassed due to API budget constraints)");
+                }}
+              >
+                <RotateCcw size={14} className="animate-pulse" />
+                Visual Reconstruction (ADR v2)
+              </button>
+
               <button
                 onClick={() => handleForensicSearch(selectedNode)}
                 disabled={loadingForensic[selectedNode.id]}
@@ -649,7 +714,7 @@ export default function App() {
 
             <button
               onClick={() => handleNodeClick(selectedNode)}
-              className="w-full flex items-center justify-center gap-2 rounded-xl border border-green-500/30 py-3 text-[10px] font-mono uppercase text-green-500 hover:bg-green-500/10 transition-all active:scale-95"
+              className="w-full flex items-center justify-center gap-2 rounded-xl border border-[#d4af37]/30 py-3 text-[10px] font-mono uppercase text-[#d4af37] hover:bg-[#d4af37]/10 transition-all active:scale-95"
             >
               <Compass size={14} />
               Center Viewport on Node
@@ -696,10 +761,20 @@ export default function App() {
         />
       )}
 
+      {showImportDeck && (
+        <ImportDeck 
+          onImportComplete={(importedGraph) => {
+            setGraph(prev => mergeGraphs(prev, importedGraph));
+            setShowImportDeck(false);
+          }}
+          onClose={() => setShowImportDeck(false)}
+        />
+      )}
+
       {/* Global Status Bar */}
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-black/60 backdrop-blur-xl border border-white/10 rounded-full flex items-center gap-4 shadow-2xl">
         <div className="flex items-center gap-2">
-          <div className={`h-2 w-2 rounded-full ${isSearching ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'}`} />
+          <div className={`h-2 w-2 rounded-full ${isSearching ? 'bg-yellow-500 animate-pulse' : 'bg-[#d4af37]'}`} />
           <span className="text-[10px] font-mono uppercase tracking-widest text-white/60">
             {isSearching ? 'Processing Intel...' : 'System Idle'}
           </span>
@@ -707,7 +782,7 @@ export default function App() {
         {graph.nodes.length > 0 && (
           <button 
             onClick={() => setShowNarrative(true)}
-            className="flex items-center gap-2 pl-4 border-l border-white/10 hover:text-green-400 transition-colors"
+            className="flex items-center gap-2 pl-4 border-l border-white/10 hover:text-[#d4af37]/80 transition-colors"
           >
             <FileText size={12} />
             <span className="text-[10px] font-mono uppercase tracking-widest">Case Narrative</span>

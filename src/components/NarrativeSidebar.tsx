@@ -40,11 +40,24 @@ export const NarrativeSidebar: React.FC<NarrativeSidebarProps> = ({ data, onClos
       className="absolute right-0 top-0 h-full w-full md:w-[450px] bg-[#0c0c0c] border-l border-white/10 z-[80] flex flex-col shadow-2xl"
     >
       <div className="p-6 pt-20 border-b border-white/5 flex justify-between items-start bg-[#111]">
-        <div>
-          <h2 className="text-xl font-bold text-white">{data.centralNode}</h2>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">Active Intelligence Case</span>
+        <div className="flex gap-4">
+          <div className="w-12 h-12 rounded-xl bg-[#d4af37]/10 flex items-center justify-center border border-[#d4af37]/20 shrink-0">
+             <img 
+                src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200&h=200" 
+                className="w-full h-full object-cover rounded-xl grayscale brightness-110 contrast-125"
+                alt="Agent"
+                referrerPolicy="no-referrer"
+             />
+          </div>
+          <div>
+            <div className="flex flex-col -mb-1">
+              <span className="text-[8px] font-mono tracking-[0.4em] text-[#d4af37]/60 uppercase">O'CROWLEY // NEXUS</span>
+              <h2 className="text-xl font-serif italic font-black text-white">{data.centralNode}</h2>
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#d4af37] animate-pulse" />
+              <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">Active Investigation Dossier</span>
+            </div>
           </div>
         </div>
         <button 
@@ -58,24 +71,24 @@ export const NarrativeSidebar: React.FC<NarrativeSidebarProps> = ({ data, onClos
       <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
         <section>
           <div className="flex items-center gap-2 mb-4">
-            <Info size={14} className="text-blue-500" />
-            <h4 className="text-xs font-mono uppercase tracking-wider text-blue-500">Narrative Intelligence</h4>
+            <Info size={14} className="text-[#d4af37]" />
+            <h4 className="text-xs font-mono uppercase tracking-widest text-[#d4af37]">Lattice Narrative</h4>
           </div>
-          <div className="prose prose-invert prose-sm max-w-none prose-p:leading-relaxed prose-headings:font-mono prose-headings:uppercase prose-headings:text-xs prose-headings:tracking-widest prose-headings:text-white/40">
+          <div className="prose prose-invert prose-sm max-w-none prose-p:leading-relaxed prose-headings:font-serif prose-headings:italic prose-headings:text-base prose-headings:text-white/80">
              <ReactMarkdown>{data.narrative}</ReactMarkdown>
           </div>
         </section>
 
         <section>
            <div className="flex items-center gap-2 mb-4">
-            <Search size={14} className="text-green-500" />
-            <h4 className="text-xs font-mono uppercase tracking-wider text-green-500">Entity Connections</h4>
+            <Search size={14} className="text-[#d4af37]" />
+            <h4 className="text-xs font-mono uppercase tracking-widest text-[#d4af37]">Evidence Links</h4>
           </div>
           <div className="space-y-4">
             {data.nodes.map(node => (
-              <div key={node.id} className="p-4 bg-white/5 border border-white/5 rounded-xl hover:border-white/20 transition-all group">
+              <div key={node.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-xl hover:border-[#d4af37]/30 transition-all group">
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-xs font-mono text-white/80 group-hover:text-white">{node.name || node.id}</span>
+                  <span className="text-xs font-serif italic text-white group-hover:text-[#d4af37] transition-colors">{node.name || node.id}</span>
                   <span className={ `text-[9px] px-1.5 py-0.5 rounded uppercase font-mono ${
                     node.type === 'person' ? 'bg-blue-500/20 text-blue-400' :
                     node.type === 'organization' ? 'bg-red-500/20 text-red-400' :

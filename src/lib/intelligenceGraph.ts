@@ -145,12 +145,13 @@ function areSimilar(s1: string, s2: string): boolean {
   const similarity = (maxLength - distance) / maxLength;
   
   // If short names, require closer match
-  if (maxLength < 5) return similarity > 0.8;
-  return similarity > 0.85; 
+  if (maxLength < 5) return similarity > 0.75;
+  return similarity > 0.8; 
 }
 
 export function mergeGraphs(existing: any, incoming: any) {
   const nodeMap = new Map<string, any>()
+  const idRedirection = new Map<string, string>()
   const linkKey = (link: any) => `${link.source}->${link.target}:${link.relation || link.relationship || 'link'}`
   const linkMap = new Map<string, any>()
 
@@ -195,8 +196,9 @@ export function mergeGraphs(existing: any, incoming: any) {
                 : newNode.description || eNode.description,
                source_refs: [...new Set([...(eNode.source_refs || []), ...(newNode.source_refs || [])])]
              });
+             // record the redirection for the safeId of the incoming node
+             idRedirection.set(safeId, existingId);
              foundFuzzy = true;
-             // We'll handle ID mapping for links at the end
              break;
           }
         }
@@ -208,9 +210,8 @@ export function mergeGraphs(existing: any, incoming: any) {
     }
   }
 
-  // Final Pass: Deduplicate nodes by NAME (Case-Insensitive) AND Similarity
+  // Final Pass: Additional Deduplication by NAME (Case-Insensitive) AND Similarity
   const finalNodes: any[] = []
-  const idRedirection = new Map<string, string>()
   const processedNames: string[] = []
 
   for (const [id, node] of nodeMap.entries()) {
@@ -227,11 +228,13 @@ export function mergeGraphs(existing: any, incoming: any) {
     }
 
     if (canonicalId) {
-      idRedirection.set(id, canonicalId)
-      const canonicalNode = finalNodes.find(n => n.id === canonicalId);
-      if (canonicalNode && canonicalNode.id !== id) {
-        canonicalNode.description = (canonicalNode.description || '') + (node.description && !canonicalNode.description.includes(node.description) ? `\n[MERGED]: ${node.description}` : '')
-        canonicalNode.source_refs = [...new Set([...(canonicalNode.source_refs || []), ...(node.source_refs || [])])]
+      if (canonicalId !== id) {
+        idRedirection.set(id, canonicalId)
+        const canonicalNode = finalNodes.find(n => n.id === canonicalId);
+        if (canonicalNode) {
+          canonicalNode.description = (canonicalNode.description || '') + (node.description && !canonicalNode.description.includes(node.description) ? `\n[MERGED]: ${node.description}` : '')
+          canonicalNode.source_refs = [...new Set([...(canonicalNode.source_refs || []), ...(node.source_refs || [])])]
+        }
       }
     } else {
       finalNodes.push(node)

@@ -30,6 +30,13 @@ export interface SearchResult {
   centralNode?: string;
 }
 
+export type VisualSettings = {
+  theme: 'default' | 'gold' | 'neon' | 'monochrome'
+  nodeShape: 'circle' | 'square' | 'diamond' | 'hexagon'
+  linkStyle: 'default' | 'thin' | 'thick'
+  showDataFlags: boolean
+}
+
 export interface AppState {
   isSearching: boolean;
   error: string | null;

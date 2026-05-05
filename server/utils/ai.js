@@ -43,7 +43,7 @@ function parseAIJson(text) {
   if (!text) throw new Error("Empty response from AI");
   
   let cleaned = text.trim();
-  console.log(`[AI_PARSER] Cleaned input start: ${cleaned.substring(0, 100)}...`);
+  console.log(`[AI_PARSER] Input length: ${cleaned.length}`);
   
   // Try to extract from markdown blocks
   const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
@@ -51,49 +51,85 @@ function parseAIJson(text) {
     cleaned = jsonMatch[1].trim();
   } else {
     // Try to find the JSON structure directly if no markdown markers
-    const startObj = cleaned.indexOf('{');
-    const startArr = cleaned.indexOf('[');
-    const start = (startObj !== -1 && (startArr === -1 || startObj < startArr)) ? startObj : startArr;
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
     
-    if (start !== -1) {
-      const endChar = cleaned[start] === '{' ? '}' : ']';
-      const end = cleaned.lastIndexOf(endChar);
-      if (end !== -1 && end > start) {
-        cleaned = cleaned.substring(start, end + 1);
-      }
+    if (start !== -1 && end !== -1 && end > start) {
+      cleaned = cleaned.substring(start, end + 1);
     }
   }
 
-  try {
-    return JSON.parse(cleaned);
-  } catch (e) {
-    // Stage 1: Basic sanitation
-    let sanitized = cleaned.replace(/"\s*\[\d+\]\s*,/g, '",');
-    sanitized = sanitized.replace(/}\s*\[\d+\]/g, '}');
-    sanitized = sanitized.replace(/\]\s*\[\d+\]/g, ']');
-    sanitized = sanitized.replace(/,\s*([\]}])/g, '$1');
-
+  const tryParse = (str) => {
     try {
-      return JSON.parse(sanitized);
-    } catch (err2) {
-      // Stage 2: Aggressive fix for unescaped quotes in narrative/descriptions
-      // Try to find strings and escape internal double quotes
-      // This is a heuristic: it assumes JSON keys are "key": and values are strings
-      let aggressive = sanitized.replace(/":\s*"([\s\S]*?)"\s*([,}])/g, (match, p1, p2) => {
-        // Escape quotes that are NOT preceded by a backslash
-        const escapedValue = p1.replace(/(?<!\\)"/g, '\\"');
-        return `": "${escapedValue}"${p2}`;
-      });
+      return JSON.parse(str);
+    } catch (e) {
+      console.warn(`[AI_PARSER] JSON.parse failed for segment: ${e.message}`);
+      return null;
+    }
+  };
 
-      try {
-        return JSON.parse(aggressive);
-      } catch (err3) {
-        console.error("[AI_PARSER] FAIL: Could not fix JSON even with aggressive sanitization.");
-        console.error("[AI_PARSER] Final attempt text:", aggressive.substring(0, 1000));
-        throw new Error(`Intelligence engine returned malformed data: ${err3.message}`);
+  // Try pure cleaned first
+  let result = tryParse(cleaned);
+  if (result) return result;
+
+  // Stage 1: Sanitation - handle common AI formatting quirks safely
+  let sanitized = cleaned
+    .replace(/,\s*([\]}])/g, '$1') // Trailing commas
+    .replace(/\[\d+(?:,\s*\d+)*\]/g, ''); // Remove citations [1] or [1, 2]
+
+  result = tryParse(sanitized);
+  if (result) return result;
+
+  // Stage 2: Handle literal newlines in strings
+  // Only target characters between double quotes to avoid breaking structure
+  let newlineFixed = sanitized.replace(/"([^"]*)"/g, (match, p1) => {
+    return '"' + p1.replace(/\n+/g, '\\n').replace(/\r+/g, '\\r') + '"';
+  });
+
+  result = tryParse(newlineFixed);
+  if (result) return result;
+
+  // Stage 3: Aggressive Quote Escaping for narrative/descriptions
+  // We target only values that are followed by characters indicating end of object/array or next key
+  let aggressive = newlineFixed.replace(/":\s*"([\s\S]*?)"\s*([,}\]])/g, (match, p1, p2) => {
+    // Escape quotes that are NOT preceded by a backslash
+    const escapedValue = p1.replace(/(?<!\\)"/g, '\\"');
+    return `": "${escapedValue}"${p2}`;
+  });
+
+  // Stage 3.5: Handle missing commas between property-value pairs
+  // This looks for "value" followed by "newKey": without a comma
+  let commaFixed = aggressive.replace(/"\s*\n\s*"/g, '", "');
+  
+  result = tryParse(commaFixed);
+  if (result) return result;
+
+  // Stage 4: Rescue Stage - Regex Extraction
+  console.warn("[AI_PARSER] JSON.parse failed all stages. Attempting Regex Rescue...");
+  try {
+    const nodesMatch = aggressive.match(/"nodes"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
+    const linksMatch = aggressive.match(/"links"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
+    const narrativeMatch = aggressive.match(/"narrative"\s*:\s*"([\s\S]*?)"\s*[,}]/);
+
+    if (nodesMatch || linksMatch) {
+      const rescueResult = {
+        nodes: nodesMatch ? (tryParse(nodesMatch[1]) || []) : [],
+        links: linksMatch ? (tryParse(linksMatch[1]) || []) : [],
+        narrative: narrativeMatch ? (narrativeMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n')) : ""
+      };
+      if (rescueResult.nodes.length > 0 || rescueResult.links.length > 0) {
+        console.log("[AI_PARSER] Regex Rescue successful!");
+        return rescueResult;
       }
     }
+  } catch (e) {
+    console.error("[AI_PARSER] Regex Rescue failed:", e);
   }
+
+  console.error("[AI_PARSER] ALL PARSING ATTEMPTS FAILED.");
+  console.error("[AI_PARSER] Problematic block text (first 2000 chars):", cleaned.substring(0, 2000));
+  
+  throw new Error("Intelligence engine returned malformed data or is under heavy load. Expected stream pattern not detected.");
 }
 
 export async function deepSearchEntity(entityName) {
@@ -130,14 +166,14 @@ export async function deepSearchEntity(entityName) {
     try {
       const response = await ai.models.generateContent({
         model: SEARCH_MODEL,
-        contents: prompt,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json",
-          tools: [{ googleSearch: {} }] // Add Google Search grounding for deep research
+          tools: [{ googleSearch: {} }]
         }
       });
-      const text = response.text;
-      return parseAIJson(text);
+      // The GenAI SDK returned result has a .text property
+      return parseAIJson(response.text);
     } catch (e) {
       console.error("Gemini API deep search failed:", e);
       throw e;
@@ -168,7 +204,7 @@ export async function extractIntelligenceFromCsv(csvContent) {
     }
     
     CSV DATA:
-    ${csvContent.substring(0, 10000)}
+    ${csvContent.substring(0, 30000)}
   `;
 
   if (process.env.Venice || process.env.VENICE_API_KEY) {
@@ -179,7 +215,7 @@ export async function extractIntelligenceFromCsv(csvContent) {
     try {
       const response = await ai.models.generateContent({
         model: SEARCH_MODEL,
-        contents: prompt,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json"
         }
@@ -229,7 +265,7 @@ export async function huntZipIntelligence(zipName, fileTree, fileSamples) {
     try {
       const response = await ai.models.generateContent({
         model: SEARCH_MODEL,
-        contents: prompt,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json"
         }
@@ -264,7 +300,7 @@ export async function forensicSearchNode(entityName) {
     try {
       const response = await ai.models.generateContent({
         model: SEARCH_MODEL,
-        contents: prompt,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
           tools: [{ googleSearch: {} }]
         }
@@ -305,7 +341,7 @@ export async function testHypothesis(hypothesis, contextNodes) {
     try {
       const response = await ai.models.generateContent({
         model: SEARCH_MODEL,
-        contents: prompt,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
           tools: [{ googleSearch: {} }]
         }
@@ -346,7 +382,7 @@ export async function expandGraph(existingData) {
     try {
       const response = await ai.models.generateContent({
         model: SEARCH_MODEL,
-        contents: prompt,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json",
           tools: [{ googleSearch: {} }]
@@ -387,7 +423,7 @@ export async function extractIntelligenceFromUrl(url) {
     try {
       const response = await ai.models.generateContent({
         model: SEARCH_MODEL,
-        contents: prompt,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json",
           tools: [{ googleSearch: {} }]
@@ -430,7 +466,7 @@ export async function extractIntelligenceFromText(text) {
     try {
       const response = await ai.models.generateContent({
         model: SEARCH_MODEL,
-        contents: prompt,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
           responseMimeType: "application/json"
         }
