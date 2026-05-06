@@ -1,8 +1,20 @@
 import { useState, useRef } from 'react'
 import { mergeGraphs } from '../lib/intelligenceGraph'
 import { extractIntelligenceFromText, extractIntelligenceFromUrl } from '../services/geminiService'
-import { FileText, Link as LinkIcon, Upload, Search, Check, Loader2, File } from 'lucide-react'
+import { FileText, Link as LinkIcon, Upload, Search, Check, Loader2, File, X, ChevronRight, AlertCircle } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+type QueueStatus = 'pending' | 'processing' | 'done' | 'error'
+
+interface QueuedFile {
+  id: string
+  file: File
+  status: QueueStatus
+  error?: string
+}
 
 // ---------------------------------------------------------------------------
 // Upload any file to the server-side universal parser
@@ -27,19 +39,82 @@ async function uploadFileForIntelligence(file: File): Promise<any> {
   return data
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+}
+
 export default function IngestToGraphPanel({ setGraph }: any) {
   const [ingestType, setIngestType] = useState<'text' | 'url' | 'file'>('text')
   const [inputValue, setInputValue] = useState('')
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [dragOver, setDragOver] = useState(false)
+
+  // Multi-file queue state
+  const [fileQueue, setFileQueue] = useState<QueuedFile[]>([])
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false)
+  const [queueProgress, setQueueProgress] = useState<{ done: number; total: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // ---------------------------------------------------------------------------
+  // Queue helpers
+  // ---------------------------------------------------------------------------
+  const addFilesToQueue = (files: FileList | File[]) => {
+    const arr = Array.from(files)
+    const newItems: QueuedFile[] = arr.map(f => ({
+      id: `${f.name}-${f.size}-${Date.now()}-${Math.random()}`,
+      file: f,
+      status: 'pending',
+    }))
+    setFileQueue(prev => [...prev, ...newItems])
+    setIngestType('file')
+  }
+
+  const removeFromQueue = (id: string) => {
+    setFileQueue(prev => prev.filter(q => q.id !== id))
+  }
+
+  const clearQueue = () => {
+    setFileQueue([])
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  // ---------------------------------------------------------------------------
+  // Process the full queue sequentially
+  // ---------------------------------------------------------------------------
+  const processQueue = async () => {
+    const pending = fileQueue.filter(q => q.status === 'pending')
+    if (pending.length === 0) return
+    setIsProcessingQueue(true)
+    setQueueProgress({ done: 0, total: pending.length })
+
+    for (let i = 0; i < pending.length; i++) {
+      const item = pending[i]
+      // Mark as processing
+      setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'processing' } : q))
+      try {
+        const result = await uploadFileForIntelligence(item.file)
+        setGraph((prev: any) => mergeGraphs(prev, result))
+        setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'done' } : q))
+      } catch (err: any) {
+        setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'error', error: err.message || 'Failed' } : q))
+      }
+      setQueueProgress({ done: i + 1, total: pending.length })
+    }
+
+    setIsProcessingQueue(false)
+    setSuccess(true)
+    setTimeout(() => setSuccess(false), 3000)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Text / URL ingest
+  // ---------------------------------------------------------------------------
   const handleIngest = async () => {
     if (ingestType === 'file') {
-      if (!selectedFile) return
-      await handleFileProcess(selectedFile)
+      await processQueue()
       return
     }
     if (!inputValue.trim()) return
@@ -64,38 +139,26 @@ export default function IngestToGraphPanel({ setGraph }: any) {
     }
   }
 
-  const handleFileProcess = async (file: File) => {
-    setLoading(true)
-    setSuccess(false)
-    try {
-      const result = await uploadFileForIntelligence(file)
-      setGraph((prev: any) => mergeGraphs(prev, result))
-      setSuccess(true)
-      setSelectedFile(null)
-      if (fileInputRef.current) fileInputRef.current.value = ''
-      setTimeout(() => setSuccess(false), 3000)
-    } catch (err: any) {
-      console.error(err)
-      alert(err.message || 'File ingestion failed.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
+  // ---------------------------------------------------------------------------
+  // File input / drag handlers
+  // ---------------------------------------------------------------------------
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) setSelectedFile(file)
+    if (e.target.files && e.target.files.length > 0) {
+      addFilesToQueue(e.target.files)
+    }
   }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragOver(false)
-    const file = e.dataTransfer.files?.[0]
-    if (file) {
-      setSelectedFile(file)
-      setIngestType('file')
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      addFilesToQueue(e.dataTransfer.files)
     }
   }
+
+  const pendingCount = fileQueue.filter(q => q.status === 'pending').length
+  const doneCount = fileQueue.filter(q => q.status === 'done').length
+  const errorCount = fileQueue.filter(q => q.status === 'error').length
 
   return (
     <div className="p-6 space-y-6">
@@ -183,39 +246,32 @@ export default function IngestToGraphPanel({ setGraph }: any) {
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                className={`w-full h-36 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center p-6 cursor-pointer transition-all group
+                className={`w-full border-2 border-dashed rounded-2xl flex flex-col items-center justify-center p-6 cursor-pointer transition-all group
                   ${dragOver
                     ? 'bg-[#d4af37]/10 border-[#d4af37]/60'
-                    : selectedFile
-                      ? 'bg-white/[0.05] border-[#d4af37]/30'
-                      : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.07] hover:border-[#d4af37]/30'
+                    : fileQueue.length > 0
+                      ? 'bg-white/[0.03] border-[#d4af37]/20 py-4'
+                      : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.07] hover:border-[#d4af37]/30 h-36'
                   }`}
               >
-                {selectedFile ? (
-                  <>
-                    <div className="p-3 rounded-full bg-[#d4af37]/10 mb-2">
-                      <File className="text-[#d4af37]" size={20} />
-                    </div>
-                    <p className="text-[10px] font-bold text-[#d4af37] uppercase tracking-wider text-center truncate max-w-full px-2">
-                      {selectedFile.name}
-                    </p>
-                    <p className="text-[9px] font-mono text-white/30 mt-1">
-                      {(selectedFile.size / 1024 / 1024).toFixed(2)} MB · Ready to inject
-                    </p>
-                  </>
-                ) : (
+                {fileQueue.length === 0 ? (
                   <>
                     <div className="p-4 rounded-full bg-white/5 mb-3 group-hover:scale-110 transition-transform">
                       <Upload className="text-white/40 group-hover:text-[#d4af37]/50" size={24} />
                     </div>
                     <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">
-                      Drop or Select Any File
+                      Drop or Select Files
                     </p>
                     <p className="text-[9px] font-mono text-white/20 mt-1 text-center leading-relaxed">
-                      PDF · DOCX · CSV · XLS · TXT · JSON · ZIP<br />
+                      Multiple files supported · PDF · DOCX · CSV · XLS · TXT · JSON · ZIP<br />
                       Images · Audio · Video · Code · Any format
                     </p>
                   </>
+                ) : (
+                  <div className="flex items-center gap-2 text-[10px] font-mono text-[#d4af37]/60 uppercase tracking-widest">
+                    <Upload size={14} />
+                    <span>Drop more files to add to queue</span>
+                  </div>
                 )}
                 <input
                   type="file"
@@ -223,17 +279,93 @@ export default function IngestToGraphPanel({ setGraph }: any) {
                   onChange={handleFileChange}
                   className="hidden"
                   accept="*/*"
+                  multiple
                 />
               </div>
 
-              {/* Clear button if file selected */}
-              {selectedFile && (
-                <button
-                  onClick={e => { e.stopPropagation(); setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
-                  className="w-full text-[9px] font-mono text-white/20 hover:text-white/40 uppercase tracking-widest py-1 transition-colors"
-                >
-                  ✕ Clear selection
-                </button>
+              {/* Queue list */}
+              {fileQueue.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[9px] font-mono uppercase tracking-widest text-white/30">
+                      Queue — {fileQueue.length} file{fileQueue.length !== 1 ? 's' : ''}
+                      {doneCount > 0 && ` · ${doneCount} done`}
+                      {errorCount > 0 && ` · ${errorCount} failed`}
+                    </span>
+                    <button
+                      onClick={e => { e.stopPropagation(); clearQueue() }}
+                      className="text-[9px] font-mono text-white/20 hover:text-red-400 uppercase tracking-widest transition-colors"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+
+                  <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+                    {fileQueue.map(item => (
+                      <div
+                        key={item.id}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all ${
+                          item.status === 'done' ? 'bg-green-500/5 border-green-500/20' :
+                          item.status === 'error' ? 'bg-red-500/5 border-red-500/20' :
+                          item.status === 'processing' ? 'bg-[#d4af37]/10 border-[#d4af37]/30 animate-pulse' :
+                          'bg-white/[0.03] border-white/5'
+                        }`}
+                      >
+                        {/* Status icon */}
+                        <div className="shrink-0">
+                          {item.status === 'done' && <Check size={12} className="text-green-400" />}
+                          {item.status === 'error' && <AlertCircle size={12} className="text-red-400" />}
+                          {item.status === 'processing' && <Loader2 size={12} className="text-[#d4af37] animate-spin" />}
+                          {item.status === 'pending' && <File size={12} className="text-white/30" />}
+                        </div>
+
+                        {/* File info */}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[10px] font-mono text-white/70 truncate">{item.file.name}</p>
+                          {item.status === 'error' && item.error && (
+                            <p className="text-[9px] font-mono text-red-400 truncate">{item.error}</p>
+                          )}
+                          {item.status === 'pending' && (
+                            <p className="text-[9px] font-mono text-white/20">{formatBytes(item.file.size)}</p>
+                          )}
+                        </div>
+
+                        {/* Status badge */}
+                        <div className="shrink-0">
+                          {item.status === 'done' && (
+                            <span className="text-[8px] font-mono uppercase text-green-400 tracking-widest">Integrated</span>
+                          )}
+                          {item.status === 'processing' && (
+                            <span className="text-[8px] font-mono uppercase text-[#d4af37] tracking-widest">Analyzing…</span>
+                          )}
+                          {item.status === 'pending' && (
+                            <button
+                              onClick={e => { e.stopPropagation(); removeFromQueue(item.id) }}
+                              className="p-1 hover:bg-white/10 rounded-full text-white/20 hover:text-white/60 transition-colors"
+                            >
+                              <X size={10} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Progress bar */}
+                  {isProcessingQueue && queueProgress && (
+                    <div className="space-y-1">
+                      <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-[#d4af37] transition-all duration-500"
+                          style={{ width: `${(queueProgress.done / queueProgress.total) * 100}%` }}
+                        />
+                      </div>
+                      <p className="text-[9px] font-mono text-white/30 text-center">
+                        Processing {queueProgress.done} / {queueProgress.total}
+                      </p>
+                    </div>
+                  )}
+                </div>
               )}
             </motion.div>
           )}
@@ -243,19 +375,32 @@ export default function IngestToGraphPanel({ setGraph }: any) {
       {/* Inject button — shown for all modes */}
       <button
         onClick={handleIngest}
-        disabled={loading || (ingestType === 'file' ? !selectedFile : !inputValue.trim())}
+        disabled={
+          loading ||
+          isProcessingQueue ||
+          (ingestType === 'file' ? pendingCount === 0 : !inputValue.trim())
+        }
         className="w-full relative overflow-hidden group flex items-center justify-center gap-2 rounded-xl bg-white text-black py-4 text-xs font-bold uppercase tracking-widest hover:bg-[#d4af37] hover:shadow-[0_0_30px_rgba(212,175,55,0.3)] transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
       >
-        {loading ? (
+        {loading || isProcessingQueue ? (
           <Loader2 className="animate-spin" size={16} />
         ) : success ? (
           <Check size={16} />
         ) : (
           <Search size={16} />
         )}
-        {loading ? 'Analyzing Intel...' : success ? 'Evidence Integrated' : 'Inject to Engine'}
+        {isProcessingQueue
+          ? `Analyzing ${queueProgress?.done ?? 0}/${queueProgress?.total ?? pendingCount}…`
+          : loading
+            ? 'Analyzing Intel...'
+            : success
+              ? 'Evidence Integrated'
+              : ingestType === 'file' && pendingCount > 1
+                ? `Inject ${pendingCount} Files to Engine`
+                : 'Inject to Engine'
+        }
 
-        {loading && (
+        {(loading || isProcessingQueue) && (
           <div className="absolute inset-0 bg-white/10 animate-[shimmer_2s_infinite]">
             <div className="h-full w-20 bg-black/5 -skew-x-12 blur-md" />
           </div>
@@ -271,7 +416,10 @@ export default function IngestToGraphPanel({ setGraph }: any) {
           <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#d4af37] text-black">
             <Check size={10} strokeWidth={4} />
           </div>
-          <span className="text-[10px] font-bold uppercase text-[#d4af37] tracking-wider">Lattice update complete</span>
+          <span className="text-[10px] font-bold uppercase text-[#d4af37] tracking-wider">
+            Lattice update complete
+            {doneCount > 1 && ` · ${doneCount} files integrated`}
+          </span>
         </motion.div>
       )}
     </div>

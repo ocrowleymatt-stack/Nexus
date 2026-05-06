@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Loader2, Cpu, Globe, Database, FileUp, UploadCloud, Archive, Box, CheckCircle, ShieldCheck, Shield, X } from 'lucide-react';
+import { Search, Loader2, Cpu, Globe, Database, FileUp, UploadCloud, Archive, Box, CheckCircle, ShieldCheck, Shield, X, File, Check, AlertCircle } from 'lucide-react';
 import Papa from 'papaparse';
 import { analyzeZipFile, getZipFileContent } from '../services/zipService';
 import { loginWithGoogleForDrive } from '../lib/firebase';
@@ -22,6 +22,18 @@ interface SearchOverlayProps {
   onDriveAuth: (token: string) => void;
 }
 
+// ---------------------------------------------------------------------------
+// Multi-file queue types
+// ---------------------------------------------------------------------------
+type QueueStatus = 'pending' | 'processing' | 'done' | 'error';
+interface QueuedFile { id: string; file: File; status: QueueStatus; error?: string; }
+
+function formatBytes(b: number) {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / 1024 / 1024).toFixed(2)} MB`;
+}
+
 export const SearchOverlay: React.FC<SearchOverlayProps> = ({ 
   onSearch, 
   onCsvUpload, 
@@ -36,6 +48,12 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<'search' | 'file' | 'drive'>('search');
   const [isDragging, setIsDragging] = useState(false);
+
+  // Multi-file queue
+  const [fileQueue, setFileQueue] = useState<QueuedFile[]>([]);
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+  const [queueProgress, setQueueProgress] = useState<{ done: number; total: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,6 +73,42 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
       console.error('Drive auth failed:', err);
       alert(`Google Drive sign-in failed: ${err?.message ?? 'Unknown error'}`);
     }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Queue helpers
+  // ---------------------------------------------------------------------------
+  const addFilesToQueue = (files: FileList | File[]) => {
+    const arr = Array.from(files);
+    const newItems: QueuedFile[] = arr.map(f => ({
+      id: `${f.name}-${f.size}-${Date.now()}-${Math.random()}`,
+      file: f,
+      status: 'pending',
+    }));
+    setFileQueue(prev => [...prev, ...newItems]);
+  };
+
+  const removeFromQueue = (id: string) => setFileQueue(prev => prev.filter(q => q.id !== id));
+  const clearQueue = () => { setFileQueue([]); if (fileInputRef.current) fileInputRef.current.value = ''; };
+
+  const processQueue = async () => {
+    const pending = fileQueue.filter(q => q.status === 'pending');
+    if (pending.length === 0) return;
+    setIsProcessingQueue(true);
+    setQueueProgress({ done: 0, total: pending.length });
+    for (let i = 0; i < pending.length; i++) {
+      const item = pending[i];
+      setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'processing' } : q));
+      try {
+        await handleFile(item.file);
+        setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'done' } : q));
+      } catch (err: any) {
+        setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'error', error: err.message || 'Failed' } : q));
+      }
+      setQueueProgress({ done: i + 1, total: pending.length });
+    }
+    setIsProcessingQueue(false);
+    setQueueProgress(null);
   };
 
   const handleFile = useCallback(async (file: File) => {
@@ -97,10 +151,14 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      addFilesToQueue(e.dataTransfer.files);
     }
   };
+
+  const pendingCount = fileQueue.filter(q => q.status === 'pending').length;
+  const doneCount = fileQueue.filter(q => q.status === 'done').length;
+  const errorCount = fileQueue.filter(q => q.status === 'error').length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
@@ -214,40 +272,110 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
+                className="space-y-4"
               >
+                {/* Drop zone */}
                 <div 
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                   onDragLeave={() => setIsDragging(false)}
                   onDrop={onDrop}
-                  className={`border-2 border-dashed rounded-2xl p-12 flex flex-col items-center justify-center transition-all ${isDragging ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-white/10 bg-white/5 hover:border-white/20'}`}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center transition-all cursor-pointer ${
+                    isDragging ? 'border-[#d4af37] bg-[#d4af37]/10 p-10' :
+                    fileQueue.length > 0 ? 'border-[#d4af37]/20 bg-white/5 p-4' :
+                    'border-white/10 bg-white/5 hover:border-white/20 p-12'
+                  }`}
                 >
-                  <div className={`p-4 rounded-full mb-4 transition-all ${isDragging ? 'bg-[#d4af37] text-black' : 'bg-white/5 text-white/20'}`}>
-                    <UploadCloud size={32} />
-                  </div>
-                  <h3 className="text-sm font-bold text-white mb-1">
-                    Intelligence Data Ingestion
-                  </h3>
-                  <p className="text-xs text-white/40 mb-6 font-mono uppercase tracking-tight">
-                    Drop any file to begin deep analysis
-                  </p>
-                  
-                  <label className="cursor-pointer px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-mono uppercase tracking-widest transition-all">
-                    Selective Upload
-                    <input 
-                      type="file" 
-                      className="hidden" 
-                      onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-                    />
-                  </label>
+                  {fileQueue.length === 0 ? (
+                    <>
+                      <div className={`p-4 rounded-full mb-4 transition-all ${isDragging ? 'bg-[#d4af37] text-black' : 'bg-white/5 text-white/20'}`}>
+                        <UploadCloud size={32} />
+                      </div>
+                      <h3 className="text-sm font-bold text-white mb-1">Intelligence Data Ingestion</h3>
+                      <p className="text-xs text-white/40 mb-4 font-mono uppercase tracking-tight">Drop files or click to select — multiple files supported</p>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2 text-[10px] font-mono text-[#d4af37]/50 uppercase tracking-widest">
+                      <UploadCloud size={14} />
+                      <span>Drop more files to add to queue</span>
+                    </div>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    multiple
+                    onChange={(e) => e.target.files && e.target.files.length > 0 && addFilesToQueue(e.target.files)}
+                  />
                 </div>
-                
-                <div className="mt-8 space-y-2">
-                  <div className="flex items-center gap-2 text-[10px] font-mono text-white/30 truncate">
-                    <FileUp size={12} />
-                    <span>
-                      Gemini Smart Extraction: Maps nodes & relationships automatically from unstructured data types.
-                    </span>
+
+                {/* Queue list */}
+                {fileQueue.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-mono uppercase tracking-widest text-white/30">
+                        Queue — {fileQueue.length} file{fileQueue.length !== 1 ? 's' : ''}
+                        {doneCount > 0 && ` · ${doneCount} done`}
+                        {errorCount > 0 && ` · ${errorCount} failed`}
+                      </span>
+                      <button onClick={clearQueue} className="text-[9px] font-mono text-white/20 hover:text-red-400 uppercase tracking-widest transition-colors">Clear all</button>
+                    </div>
+                    <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+                      {fileQueue.map(item => (
+                        <div key={item.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all ${
+                          item.status === 'done' ? 'bg-green-500/5 border-green-500/20' :
+                          item.status === 'error' ? 'bg-red-500/5 border-red-500/20' :
+                          item.status === 'processing' ? 'bg-[#d4af37]/10 border-[#d4af37]/30 animate-pulse' :
+                          'bg-white/[0.03] border-white/5'
+                        }`}>
+                          <div className="shrink-0">
+                            {item.status === 'done' && <Check size={12} className="text-green-400" />}
+                            {item.status === 'error' && <AlertCircle size={12} className="text-red-400" />}
+                            {item.status === 'processing' && <Loader2 size={12} className="text-[#d4af37] animate-spin" />}
+                            {item.status === 'pending' && <File size={12} className="text-white/30" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] font-mono text-white/70 truncate">{item.file.name}</p>
+                            {item.status === 'error' && <p className="text-[9px] font-mono text-red-400 truncate">{item.error}</p>}
+                            {item.status === 'pending' && <p className="text-[9px] font-mono text-white/20">{formatBytes(item.file.size)}</p>}
+                          </div>
+                          <div className="shrink-0">
+                            {item.status === 'done' && <span className="text-[8px] font-mono uppercase text-green-400 tracking-widest">Done</span>}
+                            {item.status === 'processing' && <span className="text-[8px] font-mono uppercase text-[#d4af37] tracking-widest">Analyzing…</span>}
+                            {item.status === 'pending' && (
+                              <button onClick={() => removeFromQueue(item.id)} className="p-1 hover:bg-white/10 rounded-full text-white/20 hover:text-white/60 transition-colors">
+                                <X size={10} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {isProcessingQueue && queueProgress && (
+                      <div className="space-y-1">
+                        <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                          <div className="h-full bg-[#d4af37] transition-all duration-500" style={{ width: `${(queueProgress.done / queueProgress.total) * 100}%` }} />
+                        </div>
+                        <p className="text-[9px] font-mono text-white/30 text-center">Processing {queueProgress.done} / {queueProgress.total}</p>
+                      </div>
+                    )}
+                    {/* Process queue button */}
+                    {pendingCount > 0 && !isProcessingQueue && (
+                      <button
+                        onClick={processQueue}
+                        disabled={isSearching}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#d4af37] text-black py-3 text-xs font-bold uppercase tracking-widest hover:bg-[#eab308] transition-all disabled:opacity-50"
+                      >
+                        <UploadCloud size={14} />
+                        Inject {pendingCount} File{pendingCount !== 1 ? 's' : ''} to Engine
+                      </button>
+                    )}
                   </div>
+                )}
+                
+                <div className="flex items-center gap-2 text-[10px] font-mono text-white/30">
+                  <FileUp size={12} />
+                  <span>Gemini Smart Extraction: Maps nodes &amp; relationships automatically from unstructured data types.</span>
                 </div>
               </motion.div>
             ) : (
