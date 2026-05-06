@@ -10,6 +10,64 @@ if (process.env.GEMINI_API_KEY) {
 
 const SEARCH_MODEL = "gemini-2.5-flash";
 
+// ---------------------------------------------------------------------------
+// OpenAI-compatible proxy helper (works without GEMINI_API_KEY)
+// ---------------------------------------------------------------------------
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || process.env.OPENAI_API_BASE || 'https://api.openai.com/v1').replace(/\/$/, '');
+
+async function callOpenAICompat(prompt, jsonMode = false) {
+  const body = {
+    model: SEARCH_MODEL,
+    messages: [
+      { role: 'system', content: jsonMode
+        ? 'You are a deep intelligence analysis engine. Respond with a valid JSON object only — no markdown, no pretext.'
+        : 'You are a deep intelligence analysis engine.' },
+      { role: 'user', content: prompt }
+    ],
+    max_tokens: 8192,
+  };
+  if (jsonMode) body.response_format = { type: 'json_object' };
+  const response = await fetch(OPENAI_BASE_URL + '/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + OPENAI_API_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+    const err = await response.text();
+    throw new Error('OpenAI-compat API error ' + response.status + ': ' + err);
+  }
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content;
+  return text;
+}
+
+async function callAI(prompt, jsonMode = true) {
+  // 1. Venice
+  if (process.env.Venice || process.env.VENICE_API_KEY) {
+    try { return await callVeniceAI(prompt); } catch (e) { console.warn('[AI] Venice failed:', e.message); }
+  }
+  // 2. OpenAI-compatible proxy (primary production path)
+  if (OPENAI_API_KEY) {
+    try {
+      const text = await callOpenAICompat(prompt, jsonMode);
+      return jsonMode ? parseAIJson(text) : text;
+    } catch (e) { console.warn('[AI] OpenAI-compat failed:', e.message); }
+  }
+  // 3. Native Gemini SDK
+  if (ai) {
+    try {
+      const response = await ai.models.generateContent({
+        model: SEARCH_MODEL,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: jsonMode ? { responseMimeType: 'application/json' } : {},
+      });
+      return jsonMode ? parseAIJson(response.text) : response.text;
+    } catch (e) { console.error('[AI] Native Gemini SDK failed:', e.message); throw e; }
+  }
+  throw new Error('No AI provider available. Configure OPENAI_API_KEY or GEMINI_API_KEY.');
+}
+
+
 export async function callVeniceAI(prompt) {
   const apiKey = process.env.Venice || process.env.VENICE_API_KEY;
   if (!apiKey) throw new Error("Venice API Key not found");
@@ -161,26 +219,7 @@ export async function deepSearchEntity(entityName) {
     } catch (e) { console.warn("Venice failed:", e.message); }
   }
 
-  // Fallback to Gemini API
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: SEARCH_MODEL,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          responseMimeType: "application/json",
-          tools: [{ googleSearch: {} }]
-        }
-      });
-      // The GenAI SDK returned result has a .text property
-      return parseAIJson(response.text);
-    } catch (e) {
-      console.error("Gemini API deep search failed:", e);
-      throw e;
-    }
-  }
-
-  throw new Error("No AI available for deep search");
+  return callAI(prompt, true);
 }
 
 export async function extractIntelligenceFromCsv(csvContent) {
@@ -211,22 +250,7 @@ export async function extractIntelligenceFromCsv(csvContent) {
     try { return await callVeniceAI(prompt); } catch (e) {}
   }
 
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: SEARCH_MODEL,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          responseMimeType: "application/json"
-        }
-      });
-      return parseAIJson(response.text);
-    } catch (e) {
-      console.error("Gemini API CSV extraction failed:", e);
-      throw e;
-    }
-  }
-  throw new Error("No AI available for CSV extraction");
+  return callAI(prompt, true);
 }
 
 export async function huntZipIntelligence(zipName, fileTree, fileSamples) {
@@ -261,22 +285,7 @@ export async function huntZipIntelligence(zipName, fileTree, fileSamples) {
     try { return await callVeniceAI(prompt); } catch (e) {}
   }
 
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: SEARCH_MODEL,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          responseMimeType: "application/json"
-        }
-      });
-      return parseAIJson(response.text);
-    } catch (e) {
-      console.error("Gemini API ZIP analysis failed:", e);
-      throw e;
-    }
-  }
-  throw new Error("No AI available for ZIP analysis");
+  return callAI(prompt, true);
 }
 
 export async function forensicSearchNode(entityName) {
@@ -296,22 +305,7 @@ export async function forensicSearchNode(entityName) {
     try { return await callVeniceAI(prompt); } catch (e) {}
   }
 
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: SEARCH_MODEL,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          tools: [{ googleSearch: {} }]
-        }
-      });
-      return response.text;
-    } catch (e) {
-      console.error("Gemini API forensic search failed:", e);
-      throw e;
-    }
-  }
-  throw new Error("No AI available for forensic search");
+  return callAI(prompt, false);
 }
 
 export async function testHypothesis(hypothesis, contextNodes) {
@@ -337,22 +331,7 @@ export async function testHypothesis(hypothesis, contextNodes) {
     try { return await callVeniceAI(prompt); } catch (e) {}
   }
 
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: SEARCH_MODEL,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          tools: [{ googleSearch: {} }]
-        }
-      });
-      return response.text;
-    } catch (e) {
-      console.error("Gemini API hypothesis test failed:", e);
-      throw e;
-    }
-  }
-  throw new Error("No AI available for hypothesis test");
+  return callAI(prompt, false);
 }
 
 export async function expandGraph(existingData) {
@@ -378,23 +357,7 @@ export async function expandGraph(existingData) {
     try { return await callVeniceAI(prompt); } catch (e) {}
   }
 
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: SEARCH_MODEL,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          responseMimeType: "application/json",
-          tools: [{ googleSearch: {} }]
-        }
-      });
-      return parseAIJson(response.text);
-    } catch (e) {
-      console.error("Gemini API graph expansion failed:", e);
-      throw e;
-    }
-  }
-  throw new Error("No AI available for graph expansion");
+  return callAI(prompt, true);
 }
 
 export async function extractIntelligenceFromUrl(url) {
@@ -419,23 +382,7 @@ export async function extractIntelligenceFromUrl(url) {
     try { return await callVeniceAI(prompt); } catch (e) {}
   }
 
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: SEARCH_MODEL,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          responseMimeType: "application/json",
-          tools: [{ googleSearch: {} }]
-        }
-      });
-      return parseAIJson(response.text);
-    } catch (e) {
-      console.error("Gemini API URL extraction failed:", e);
-      throw e;
-    }
-  }
-  throw new Error("No AI available for URL extraction");
+  return callAI(prompt, true);
 }
 
 export async function extractIntelligenceFromText(text) {
@@ -462,20 +409,5 @@ export async function extractIntelligenceFromText(text) {
     try { return await callVeniceAI(prompt); } catch (e) {}
   }
 
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: SEARCH_MODEL,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          responseMimeType: "application/json"
-        }
-      });
-      return parseAIJson(response.text);
-    } catch (e) {
-      console.error("Gemini API text extraction failed:", e);
-      throw e;
-    }
-  }
-  throw new Error("No AI available for text extraction");
+  return callAI(prompt, true);
 }
