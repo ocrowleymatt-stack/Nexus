@@ -33,6 +33,9 @@ const defaultVisualSettings: VisualSettings = {
   theme: 'default',
   nodeShape: 'circle',
   linkStyle: 'default',
+  layoutTemplate: 'force',
+  mapDepth: 'relief',
+  autoSpatialExpand: true,
   showDataFlags: true
 }
 
@@ -49,7 +52,7 @@ export default function App() {
   const [isVeniceLoading, setIsVeniceLoading] = useState(false)
   const [visualSettings, setVisualSettings] = useState<VisualSettings>(() => {
     const cached = localStorage.getItem('nexus_visual_settings');
-    return cached ? JSON.parse(cached) : defaultVisualSettings;
+    return cached ? { ...defaultVisualSettings, ...JSON.parse(cached) } : defaultVisualSettings;
   })
   
   // Auth & Projects State

@@ -30,10 +30,16 @@ export interface SearchResult {
   centralNode?: string;
 }
 
+export type LayoutTemplate = 'force' | 'isometric' | 'helix' | 'fractal' | 'constellation'
+export type MapDepth = 'flat' | 'relief' | 'deep'
+
 export type VisualSettings = {
   theme: 'default' | 'gold' | 'neon' | 'monochrome'
   nodeShape: 'circle' | 'square' | 'diamond' | 'hexagon'
   linkStyle: 'default' | 'thin' | 'thick'
+  layoutTemplate: LayoutTemplate
+  mapDepth: MapDepth
+  autoSpatialExpand: boolean
   showDataFlags: boolean
 }
 

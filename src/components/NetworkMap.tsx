@@ -7,9 +7,98 @@ import React, { useMemo } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { forceCollide } from 'd3-force';
 import { SearchResult, VisualSettings } from '../types';
-import { Maximize, Search, Target, Minimize, Shield, FileText, Globe } from 'lucide-react';
+import { Maximize, Search, Target, Minimize, Shield, FileText, Globe, ZoomIn, ZoomOut, Layers3 } from 'lucide-react';
 
 import { ErrorBoundary } from './ErrorBoundary';
+
+const DEFAULT_VISUAL_SETTINGS: VisualSettings = {
+  theme: 'default',
+  nodeShape: 'circle',
+  linkStyle: 'default',
+  layoutTemplate: 'force',
+  mapDepth: 'relief',
+  autoSpatialExpand: true,
+  showDataFlags: true,
+};
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+function normalizedLinkId(endpoint: any): string {
+  return endpoint && typeof endpoint === 'object' ? endpoint.id : endpoint;
+}
+
+function nodeDepth(node: any, index: number, total: number) {
+  const typeSeed = String(node.type || node.group || 'entity').split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return ((index + typeSeed) % Math.max(3, Math.min(9, total))) / Math.max(1, Math.min(9, total) - 1);
+}
+
+function applyLayoutTemplate(nodes: any[], links: any[], settings: VisualSettings) {
+  const template = settings.layoutTemplate || 'force';
+  if (template === 'force') return nodes;
+
+  const adjacency = new Map<string, number>();
+  for (const link of links) {
+    const source = normalizedLinkId(link.source);
+    const target = normalizedLinkId(link.target);
+    adjacency.set(source, (adjacency.get(source) || 0) + 1);
+    adjacency.set(target, (adjacency.get(target) || 0) + 1);
+  }
+
+  const sorted = [...nodes].sort((a, b) => (adjacency.get(b.id) || 0) - (adjacency.get(a.id) || 0));
+  const rank = new Map(sorted.map((node, index) => [node.id, index]));
+  const total = Math.max(1, nodes.length);
+  const spatialBoost = settings.autoSpatialExpand ? 1.45 : 1;
+  const depthBoost = settings.mapDepth === 'deep' ? 1.5 : settings.mapDepth === 'relief' ? 1.2 : 1;
+  const radius = clamp(90 + total * 14, 140, 700) * spatialBoost * depthBoost;
+
+  return nodes.map((node, index) => {
+    if (node.id === 'SYSTEM_EXPAND') return { ...node };
+
+    const orderedIndex = rank.get(node.id) ?? index;
+    const depth = nodeDepth(node, orderedIndex, total);
+    let x = 0;
+    let y = 0;
+
+    if (template === 'isometric') {
+      const columns = Math.ceil(Math.sqrt(total));
+      const row = Math.floor(orderedIndex / columns);
+      const col = orderedIndex % columns;
+      const z = depth * 120 * depthBoost;
+      x = (col - columns / 2) * 88 + z * 0.72;
+      y = (row - columns / 2) * 58 - z * 0.42;
+    } else if (template === 'helix') {
+      const angle = orderedIndex * 0.78;
+      const helixRadius = radius * 0.38 + depth * 90;
+      x = Math.cos(angle) * helixRadius;
+      y = (orderedIndex - total / 2) * 38 + Math.sin(angle) * 54 * depthBoost;
+    } else if (template === 'fractal') {
+      const branch = orderedIndex % 6;
+      const generation = Math.floor(orderedIndex / 6);
+      const angle = (Math.PI * 2 * branch) / 6 + generation * 0.28;
+      const generationRadius = (Math.pow(1.42, generation % 8) * 44 + depth * 110) * spatialBoost;
+      const microAngle = angle * 3 + orderedIndex;
+      x = Math.cos(angle) * generationRadius + Math.cos(microAngle) * 24;
+      y = Math.sin(angle) * generationRadius + Math.sin(microAngle) * 24;
+    } else {
+      const orbit = Math.floor(Math.sqrt(orderedIndex));
+      const position = orderedIndex - orbit * orbit;
+      const count = Math.max(1, orbit * 2 + 1);
+      const angle = (Math.PI * 2 * position) / count;
+      const orbitRadius = (90 + orbit * 76 + depth * 110) * spatialBoost;
+      x = Math.cos(angle) * orbitRadius;
+      y = Math.sin(angle) * orbitRadius;
+    }
+
+    return {
+      ...node,
+      x,
+      y,
+      fx: x,
+      fy: y,
+      zDepth: depth,
+    };
+  });
+}
 
 interface NetworkMapProps {
   data: SearchResult;
@@ -22,8 +111,9 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
   data, 
   onNodeClick, 
   selectedNode,
-  visualSettings = { theme: 'default', nodeShape: 'circle', linkStyle: 'default', showDataFlags: true }
+  visualSettings = DEFAULT_VISUAL_SETTINGS
 }) => {
+  const settings = { ...DEFAULT_VISUAL_SETTINGS, ...visualSettings };
   const containerRef = React.useRef<HTMLDivElement>(null);
   const fgRef = React.useRef<any>(null);
   const lastCenteredNodeRef = React.useRef<string | null>(null);
@@ -87,16 +177,19 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
 
   React.useEffect(() => {
     if (fgRef.current) {
+      const spatialMultiplier = settings.autoSpatialExpand ? 1.4 : 1;
+      const isTemplateLocked = settings.layoutTemplate !== 'force';
+
       // Configuration for a 'sticky' yet 'elastic' feel
-      fgRef.current.d3Force('charge').strength(-200);
-      fgRef.current.d3Force('link').distance(80).strength(1);
-      fgRef.current.d3Force('center').strength(0.05);
-      fgRef.current.d3Force('collide', forceCollide(35));
+      fgRef.current.d3Force('charge').strength(isTemplateLocked ? -40 : -220 * spatialMultiplier);
+      fgRef.current.d3Force('link').distance(isTemplateLocked ? 120 : 90 * spatialMultiplier).strength(isTemplateLocked ? 0.25 : 0.85);
+      fgRef.current.d3Force('center').strength(isTemplateLocked ? 0.015 : 0.04);
+      fgRef.current.d3Force('collide', forceCollide(settings.mapDepth === 'deep' ? 50 : 36));
       
       // Warm up the simulation
       fgRef.current.d3ReheatSimulation();
     }
-  }, [data.nodes.length === 0]); // Re-init primarily when clearing/restarting
+  }, [data.nodes.length, settings.layoutTemplate, settings.mapDepth, settings.autoSpatialExpand]);
 
   React.useEffect(() => {
     if (data.nodes.length > 0 && fgRef.current && data.centralNode !== lastCenteredNodeRef.current) {
@@ -156,8 +249,8 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
   }, []);
 
   const graphData = useMemo(() => {
-    // We must try to keep node objects stable if we want them to remain clickable/persistent
-    const nodes = [...data.nodes];
+    // Copy nodes so spatial templates can pin positions without mutating saved graph data.
+    const nodes = data.nodes.map(node => ({ ...node }));
     const nodeIds = new Set(nodes.map(n => n.id));
     
     // Filter invalid links
@@ -178,21 +271,37 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
       });
     }
 
-    return { nodes, links };
-  }, [data.nodes, data.links]);
+    return { nodes: applyLayoutTemplate(nodes, links, settings), links };
+  }, [data.nodes, data.links, settings.layoutTemplate, settings.mapDepth, settings.autoSpatialExpand]);
 
   const handleRecenter = () => {
     if (fgRef.current) {
-      fgRef.current.zoomToFit(600, 100);
+      fgRef.current.zoomToFit(700, settings.autoSpatialExpand ? 180 : 100);
     }
   };
 
+  const handleZoomStep = (direction: 1 | -1) => {
+    if (!fgRef.current) return;
+    const currentZoom = fgRef.current.zoom();
+    fgRef.current.zoom(clamp(currentZoom * (direction > 0 ? 1.25 : 0.8), 0.05, 20), 300);
+  };
+
+  React.useEffect(() => {
+    if (!settings.autoSpatialExpand || !fgRef.current || data.nodes.length === 0) return;
+
+    const timer = window.setTimeout(() => {
+      fgRef.current?.zoomToFit(900, settings.layoutTemplate === 'force' ? 180 : 260);
+    }, 450);
+
+    return () => window.clearTimeout(timer);
+  }, [data.nodes.length, data.links.length, settings.autoSpatialExpand, settings.layoutTemplate]);
+
   return (
-    <div ref={containerRef} className={`w-full h-full relative overflow-hidden ${visualSettings.theme === 'gold' ? 'bg-[#050505]' : 'bg-[#050505]'}`} style={{ touchAction: 'none' }}>
+    <div ref={containerRef} className={`w-full h-full relative overflow-hidden ${settings.theme === 'gold' ? 'bg-[#050505]' : 'bg-[#050505]'}`} style={{ touchAction: 'none' }}>
       {(!data.nodes || data.nodes.length === 0) && (
         <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
           <div className="p-10 border border-white/5 bg-white/[0.02] rounded-3xl backdrop-blur-md text-center max-w-sm">
-            <Search className={`${visualSettings.theme === 'gold' ? 'text-[#d4af37]' : 'text-green-500'} mx-auto mb-4 animate-pulse`} size={40} />
+            <Search className={`${settings.theme === 'gold' ? 'text-[#d4af37]' : 'text-green-500'} mx-auto mb-4 animate-pulse`} size={40} />
             <h3 className="text-white font-serif italic text-sm mb-2 uppercase tracking-widest">Lattice Inactive</h3>
             <p className="text-white/40 text-[10px] font-mono leading-relaxed uppercase">
               Ingest evidence or target an entity to map intelligence.
@@ -201,21 +310,39 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
         </div>
       )}
       <div className="absolute top-4 left-4 z-10 pointer-events-none">
-        <h2 className={`text-[10px] font-mono uppercase tracking-[0.3em] ${visualSettings.theme === 'gold' ? 'text-[#d4af37]/60' : 'text-green-500/50'}`}>Network Topology</h2>
-        <div className={`mt-1 h-[1px] w-24 ${visualSettings.theme === 'gold' ? 'bg-[#d4af37]/20' : 'bg-green-500/20'}`} />
+        <h2 className={`text-[10px] font-mono uppercase tracking-[0.3em] ${settings.theme === 'gold' ? 'text-[#d4af37]/60' : 'text-green-500/50'}`}>Network Topology</h2>
+        <div className={`mt-1 h-[1px] w-24 ${settings.theme === 'gold' ? 'bg-[#d4af37]/20' : 'bg-green-500/20'}`} />
       </div>
 
       <div className="absolute top-4 right-4 z-10 flex gap-2">
+        <div className="hidden sm:flex items-center gap-2 rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-[9px] font-mono uppercase tracking-widest text-white/40">
+          <Layers3 size={14} />
+          {settings.layoutTemplate} / {settings.mapDepth}
+        </div>
+        <button
+          onClick={() => handleZoomStep(1)}
+          className={`p-2 rounded-lg bg-white/5 border border-white/10 text-white/50 transition-all group ${settings.theme === 'gold' ? 'hover:text-[#d4af37] hover:border-[#d4af37]/50' : 'hover:text-green-500 hover:border-green-500/50'}`}
+          title="Zoom In"
+        >
+          <ZoomIn size={18} className="group-hover:scale-110 transition-transform" />
+        </button>
+        <button
+          onClick={() => handleZoomStep(-1)}
+          className={`p-2 rounded-lg bg-white/5 border border-white/10 text-white/50 transition-all group ${settings.theme === 'gold' ? 'hover:text-[#d4af37] hover:border-[#d4af37]/50' : 'hover:text-green-500 hover:border-green-500/50'}`}
+          title="Zoom Out"
+        >
+          <ZoomOut size={18} className="group-hover:scale-110 transition-transform" />
+        </button>
         <button 
           onClick={handleRecenter}
-          className={`p-2 rounded-lg bg-white/5 border border-white/10 text-white/50 transition-all group ${visualSettings.theme === 'gold' ? 'hover:text-[#d4af37] hover:border-[#d4af37]/50' : 'hover:text-green-500 hover:border-green-500/50'}`}
+          className={`p-2 rounded-lg bg-white/5 border border-white/10 text-white/50 transition-all group ${settings.theme === 'gold' ? 'hover:text-[#d4af37] hover:border-[#d4af37]/50' : 'hover:text-green-500 hover:border-green-500/50'}`}
           title="Recentre View"
         >
           <Target size={18} className="group-hover:scale-110 transition-transform" />
         </button>
         <button 
           onClick={toggleFullscreen}
-          className={`p-2 rounded-lg bg-white/5 border border-white/10 text-white/50 transition-all group ${visualSettings.theme === 'gold' ? 'hover:text-[#d4af37] hover:border-[#d4af37]/50' : 'hover:text-green-500 hover:border-green-500/50'}`}
+          className={`p-2 rounded-lg bg-white/5 border border-white/10 text-white/50 transition-all group ${settings.theme === 'gold' ? 'hover:text-[#d4af37] hover:border-[#d4af37]/50' : 'hover:text-green-500 hover:border-green-500/50'}`}
           title={isFullscreen ? "Exit Fullscreen" : "Fullscreen Map"}
         >
           {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
@@ -228,12 +355,47 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
           graphData={graphData}
           width={dimensions.width}
           height={dimensions.height}
-          backgroundColor={visualSettings.theme === 'gold' ? '#0a0800' : '#050505'}
+          backgroundColor={settings.theme === 'gold' ? '#0a0800' : '#050505'}
+          onRenderFramePre={(ctx: CanvasRenderingContext2D, globalScale: number) => {
+            if (settings.layoutTemplate === 'force' && settings.mapDepth === 'flat') return;
+
+            const validScale = typeof globalScale === 'number' && !isNaN(globalScale) && globalScale > 0 ? globalScale : 1;
+            const lineColor = settings.theme === 'gold' ? 'rgba(212,175,55,0.08)' : 'rgba(16,185,129,0.07)';
+            const accentColor = settings.theme === 'neon' ? 'rgba(244,114,182,0.16)' : lineColor;
+            const gridSize = (settings.layoutTemplate === 'fractal' ? 80 : 120) / validScale;
+            const extent = Math.max(dimensions.width, dimensions.height) * 2;
+
+            ctx.save();
+            ctx.lineWidth = 1 / validScale;
+            ctx.strokeStyle = lineColor;
+            for (let x = -extent; x <= extent; x += gridSize) {
+              ctx.beginPath();
+              ctx.moveTo(x, -extent);
+              ctx.lineTo(x + (settings.layoutTemplate === 'isometric' ? extent * 0.35 : 0), extent);
+              ctx.stroke();
+            }
+            for (let y = -extent; y <= extent; y += gridSize) {
+              ctx.beginPath();
+              ctx.moveTo(-extent, y);
+              ctx.lineTo(extent, y + (settings.layoutTemplate === 'isometric' ? -extent * 0.22 : 0));
+              ctx.stroke();
+            }
+
+            if (settings.layoutTemplate === 'fractal') {
+              ctx.strokeStyle = accentColor;
+              for (let i = 1; i <= 4; i++) {
+                ctx.beginPath();
+                ctx.arc(0, 0, (80 * Math.pow(1.65, i)) / validScale, 0, Math.PI * 2);
+                ctx.stroke();
+              }
+            }
+            ctx.restore();
+          }}
           nodeLabel="name"
           nodeColor={(node: any) => {
             const isCentral = node.id === data.centralNode || node.name === data.centralNode;
             
-            if (visualSettings.theme === 'gold') {
+            if (settings.theme === 'gold') {
                if (isCentral) return '#d4af37';
                switch (node.type) {
                  case 'person': return '#fef08a';
@@ -244,12 +406,12 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
                }
             }
 
-            if (visualSettings.theme === 'monochrome') {
+            if (settings.theme === 'monochrome') {
                if (isCentral) return '#ffffff';
                return '#4b5563';
             }
 
-            if (visualSettings.theme === 'neon') {
+            if (settings.theme === 'neon') {
                if (isCentral) return '#00ffff';
                switch (node.type) {
                  case 'person': return '#f472b6';
@@ -275,17 +437,17 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
             return node.val || 5;
           }}
           linkColor={() => {
-            if (visualSettings.theme === 'gold') return 'rgba(212, 175, 55, 0.2)';
-            if (visualSettings.theme === 'neon') return 'rgba(0, 255, 255, 0.2)';
+            if (settings.theme === 'gold') return 'rgba(212, 175, 55, 0.2)';
+            if (settings.theme === 'neon') return 'rgba(0, 255, 255, 0.2)';
             return 'rgba(255, 255, 255, 0.2)';
           }}
           linkWidth={(link: any) => {
-            const base = visualSettings.linkStyle === 'thick' ? 5 : visualSettings.linkStyle === 'thin' ? 1 : 3;
+            const base = settings.linkStyle === 'thick' ? 5 : settings.linkStyle === 'thin' ? 1 : 3;
             return base;
           }}
-          linkDirectionalParticles={visualSettings.theme === 'neon' ? 8 : 4}
+          linkDirectionalParticles={settings.theme === 'neon' ? 8 : 4}
           linkDirectionalParticleSpeed={0.008}
-          linkDirectionalParticleWidth={visualSettings.linkStyle === 'thick' ? 4 : 2}
+          linkDirectionalParticleWidth={settings.linkStyle === 'thick' ? 4 : 2}
           linkDirectionalArrowLength={6}
           linkDirectionalArrowRelPos={1}
           linkCurvature={0.1}
@@ -310,23 +472,46 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
             
             // Determine Color
             let fillStyle = '#d4af37';
-            if (visualSettings.theme === 'gold') {
+            if (settings.theme === 'gold') {
                fillStyle = isCentral ? '#d4af37' : '#eab308';
                if (node.type === 'person') fillStyle = '#fef08a';
-            } else if (visualSettings.theme === 'neon') {
+            } else if (settings.theme === 'neon') {
                fillStyle = isCentral ? '#00ffff' : '#f472b6';
-            } else if (visualSettings.theme === 'monochrome') {
+            } else if (settings.theme === 'monochrome') {
                fillStyle = isCentral ? '#ffffff' : '#4b5563';
             } else {
                fillStyle = isCentral ? '#10b981' : (node.color || '#10b981');
             }
 
-            const size = isCentral ? 8 : 5;
+            const depth = typeof node.zDepth === 'number' ? node.zDepth : 0;
+            const depthScale = settings.mapDepth === 'deep' ? 1 + depth * 0.7 : settings.mapDepth === 'relief' ? 1 + depth * 0.35 : 1;
+            const size = (isCentral ? 8 : 5) * depthScale;
+            const shadowOffset = settings.mapDepth === 'flat' ? 0 : (settings.mapDepth === 'deep' ? 12 : 7) * depth / validScale;
+
+            if (shadowOffset > 0) {
+              ctx.save();
+              ctx.fillStyle = 'rgba(0,0,0,0.38)';
+              ctx.beginPath();
+              ctx.ellipse(node.x + shadowOffset, node.y + shadowOffset * 0.62, size * 1.25, size * 0.56, 0, 0, 2 * Math.PI);
+              ctx.fill();
+              ctx.restore();
+            }
+
+            if (settings.mapDepth !== 'flat') {
+              ctx.save();
+              ctx.strokeStyle = settings.theme === 'gold' ? 'rgba(212,175,55,0.16)' : 'rgba(255,255,255,0.12)';
+              ctx.lineWidth = 1 / validScale;
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, size + (8 * depth) / validScale, 0, 2 * Math.PI);
+              ctx.stroke();
+              ctx.restore();
+            }
+
             ctx.fillStyle = fillStyle;
             
             // Draw Shape
             ctx.beginPath();
-            const shape = visualSettings.nodeShape;
+            const shape = settings.nodeShape;
             if (shape === 'square') {
                ctx.rect(node.x - size, node.y - size, size * 2, size * 2);
             } else if (shape === 'diamond') {
@@ -350,7 +535,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
             ctx.fill();
 
             // Glow effect for themes
-            if (visualSettings.theme === 'gold' || visualSettings.theme === 'neon') {
+            if (settings.theme === 'gold' || settings.theme === 'neon') {
               ctx.shadowBlur = 15 / validScale;
               ctx.shadowColor = fillStyle;
               ctx.stroke();
@@ -358,12 +543,12 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
             }
 
             // Data Flags (Metadata indicators)
-            if (visualSettings.showDataFlags) {
+            if (settings.showDataFlags) {
                const hasSources = node.source_refs && node.source_refs.length > 0;
                const hasDescription = !!node.description;
                
                if (hasSources || hasDescription) {
-                  ctx.fillStyle = visualSettings.theme === 'gold' ? '#fcd34d' : '#ffffff';
+                  ctx.fillStyle = settings.theme === 'gold' ? '#fcd34d' : '#ffffff';
                   ctx.beginPath();
                   ctx.arc(node.x + size, node.y - size, 2 / validScale, 0, 2 * Math.PI);
                   ctx.fill();
@@ -373,8 +558,8 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
             // Label
             const fontSize = Math.max(1, Math.min(60, 11 / validScale));
             ctx.font = `${fontSize}px "JetBrains Mono"`;
-            ctx.fillStyle = visualSettings.theme === 'gold' ? '#fef08a' : 'white';
-            if (visualSettings.theme === 'monochrome') ctx.fillStyle = '#f3f4f6';
+            ctx.fillStyle = settings.theme === 'gold' ? '#fef08a' : 'white';
+            if (settings.theme === 'monochrome') ctx.fillStyle = '#f3f4f6';
             
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
