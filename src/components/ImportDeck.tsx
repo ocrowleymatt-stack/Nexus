@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { useState, useRef, useCallback } from 'react';
+import { motion } from 'motion/react';
 import { 
   FileUp, 
   Database, 
@@ -17,7 +17,12 @@ import {
   Camera,
   MessageSquare,
   Globe,
-  CreditCard
+  CreditCard,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  Clock,
+  Trash2
 } from 'lucide-react';
 import { inspectZip } from '../lib/importers/zipInspector';
 import { processFacebookExport } from '../lib/importers/facebookExport';
@@ -37,102 +42,148 @@ interface ImportDeckProps {
 
 type Tab = 'takeout' | 'facebook' | 'apple-health' | 'photos' | 'whatsapp' | 'browser' | 'financial' | 'breadcrumb-zip' | 'csv' | 'inspector';
 
+type QueueStatus = 'pending' | 'processing' | 'done' | 'error';
+
+interface QueueItem {
+  id: string;
+  file: File;
+  status: QueueStatus;
+  nodes?: number;
+  links?: number;
+  error?: string;
+  graph?: NexusGraph;
+  logs: string[];
+}
+
 export default function ImportDeck({ onImportComplete, onClose }: ImportDeckProps) {
   const [activeTab, setActiveTab] = useState<Tab>('takeout');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-  const [stats, setStats] = useState<any>(null);
-  const [previewGraph, setPreviewGraph] = useState<NexusGraph | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const processingRef = useRef(false);
 
-  const [logs, setLogs] = useState<string[]>([]);
-
-  const addLog = (msg: string) => {
-    console.log(`[IMPORT_LOG] ${msg}`);
-    setLogs(prev => [...prev.slice(-19), `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  const addToQueue = (files: File[]) => {
+    const newItems: QueueItem[] = files.map(f => ({
+      id: `${f.name}-${Date.now()}-${Math.random()}`,
+      file: f,
+      status: 'pending',
+      logs: []
+    }));
+    setQueue(prev => [...prev, ...newItems]);
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = e.target.files?.[0];
-    addLog(`File selected: ${selected?.name || "none"} (${selected?.type || "unknown type"})`);
-    if (selected) {
-      setFile(selected);
-      setPreviewGraph(null);
-      setStats(null);
-      setWarnings([]);
-    }
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length) addToQueue(files);
+    e.target.value = '';
   };
 
-  const runImport = async () => {
-    if (!file) {
-      addLog("WARNING: No file selected");
-      return;
-    }
-    addLog(`STARTING IMPORT: ${file.name} | TAB: ${activeTab}`);
-    setIsProcessing(true);
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length) addToQueue(files);
+  }, []);
+
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = () => setIsDragging(false);
+
+  const removeFromQueue = (id: string) => {
+    setQueue(prev => prev.filter(q => q.id !== id));
+    if (selectedId === id) setSelectedId(null);
+  };
+
+  const clearDone = () => setQueue(prev => prev.filter(q => q.status !== 'done' && q.status !== 'error'));
+
+  const updateItem = (id: string, patch: Partial<QueueItem>) => {
+    setQueue(prev => prev.map(q => q.id === id ? { ...q, ...patch } : q));
+  };
+
+  const addItemLog = (id: string, msg: string) => {
+    const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    setQueue(prev => prev.map(q => q.id === id ? { ...q, logs: [...q.logs.slice(-19), line] } : q));
+  };
+
+  const processFile = async (item: QueueItem): Promise<NexusGraph | null> => {
+    const { file, id } = item;
+    updateItem(id, { status: 'processing' });
+    addItemLog(id, `STARTING: ${file.name} | MODE: ${activeTab}`);
     try {
       let builder;
-      
       if (activeTab === 'apple-health') {
-        addLog("Parsing Apple Health XML...");
+        addItemLog(id, "Parsing Apple Health XML...");
         builder = await processAppleHealth(file);
       } else if (activeTab === 'whatsapp') {
-        addLog("Parsing WhatsApp text export...");
+        addItemLog(id, "Parsing WhatsApp export...");
         builder = await processWhatsAppExport(file);
       } else if (activeTab === 'browser') {
-        addLog("Parsing Browser History JSON/CSV...");
+        addItemLog(id, "Parsing Browser History...");
         builder = await processBrowserHistory(file);
       } else if (activeTab === 'financial') {
-        addLog("Parsing Financial CSV (Monzo/Starling/etc)...");
+        addItemLog(id, "Parsing Financial CSV...");
         builder = await processFinancialCsv(file);
       } else if (activeTab === 'csv') {
-        addLog("Parsing Generic CSV/TSV Loader...");
+        addItemLog(id, "Parsing Generic CSV/TSV...");
         builder = await processGenericCsv(file);
       } else {
-        addLog("Opening ZIP archive...");
+        addItemLog(id, "Opening ZIP archive...");
         const zipNodes = await inspectZip(file);
         const paths = zipNodes.map(n => n.path);
-        addLog(`ZIP metadata loaded. Entries: ${paths.length}`);
-        
-        if (activeTab === 'facebook') {
-          addLog("Running Facebook Export extractor...");
-          builder = await processFacebookExport(file, paths);
-        } else if (activeTab === 'takeout') {
-          addLog("Running Google Takeout extractor...");
-          builder = await processGoogleTakeout(file, paths);
-        } else if (activeTab === 'photos') {
-          addLog("Running Photos/EXIF extractor...");
-          builder = await processPhotosMetadata(file, paths);
-        } else if (activeTab === 'breadcrumb-zip') {
-          addLog("Running Breadcrumb Takeout extractor...");
-          builder = await processGoogleTakeout(file, paths);
-        }
-
-        setStats(prev => ({ ...(prev || {}), filesDetected: paths.length, paths }));
+        addItemLog(id, `ZIP loaded. Entries: ${paths.length}`);
+        if (activeTab === 'facebook') builder = await processFacebookExport(file, paths);
+        else if (activeTab === 'takeout') builder = await processGoogleTakeout(file, paths);
+        else if (activeTab === 'photos') builder = await processPhotosMetadata(file, paths);
+        else if (activeTab === 'breadcrumb-zip') builder = await processGoogleTakeout(file, paths);
       }
-
       if (builder) {
         const graph = builder.getGraph();
-        addLog(`SUCCESS: Extracted ${builder.getNodeCount()} nodes and ${builder.getLinkCount()} links.`);
-        if (builder.getNodeCount() === 0) {
-          addLog("WARNING: Zero nodes extracted. Check if file matches expected structure.");
-        }
-        setPreviewGraph(graph);
-        setStats(prev => ({
-          ...(prev || {}),
-          nodes: builder.getNodeCount(),
-          links: builder.getLinkCount()
-        }));
+        const nodes = builder.getNodeCount();
+        const links = builder.getLinkCount();
+        addItemLog(id, `SUCCESS: ${nodes} nodes, ${links} links extracted.`);
+        updateItem(id, { status: 'done', nodes, links, graph });
+        return graph;
       } else {
-        addLog("ERROR: Builder not initialized.");
-        setWarnings(["Exporter failed to initialize logic for this tab."]);
+        throw new Error("Builder not initialized for this tab.");
       }
     } catch (err) {
-      addLog(`CRITICAL ERROR: ${err instanceof Error ? err.message : String(err)}`);
-      setWarnings([`Import failed: ${err instanceof Error ? err.message : String(err)}`]);
-    } finally {
-      setIsProcessing(false);
+      const msg = err instanceof Error ? err.message : String(err);
+      addItemLog(id, `ERROR: ${msg}`);
+      updateItem(id, { status: 'error', error: msg });
+      return null;
     }
+  };
+
+  const runQueue = async () => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setIsRunning(true);
+    const pending = queue.filter(q => q.status === 'pending');
+    for (const item of pending) {
+      await processFile(item);
+    }
+    processingRef.current = false;
+    setIsRunning(false);
+  };
+
+  const pendingCount = queue.filter(q => q.status === 'pending').length;
+  const doneCount = queue.filter(q => q.status === 'done').length;
+  const errorCount = queue.filter(q => q.status === 'error').length;
+  const selectedItem = queue.find(q => q.id === selectedId);
+
+  const statusIcon = (status: QueueStatus) => {
+    if (status === 'pending') return <Clock size={14} className="text-white/30" />;
+    if (status === 'processing') return <Loader2 size={14} className="text-[#d4af37] animate-spin" />;
+    if (status === 'done') return <CheckCircle2 size={14} className="text-green-400" />;
+    return <AlertCircle size={14} className="text-red-400" />;
+  };
+
+  const statusLabel = (status: QueueStatus) => {
+    if (status === 'pending') return 'QUEUED';
+    if (status === 'processing') return 'SCANNING';
+    if (status === 'done') return 'COMPLETE';
+    return 'ERROR';
   };
 
   return (
@@ -150,17 +201,27 @@ export default function ImportDeck({ onImportComplete, onClose }: ImportDeckProp
             </div>
             <div>
               <h2 className="text-xl font-serif italic text-white leading-none">NexusPlexus Breadcrumb Injection</h2>
-              <p className="text-[10px] font-mono text-white/30 uppercase tracking-widest mt-1">Multi-Source Forensic Gathering Agent // v2.0-STABLE</p>
+              <p className="text-[10px] font-mono text-white/30 uppercase tracking-widest mt-1">Multi-Source Forensic Gathering Agent // v2.1-QUEUE</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors text-white/50">
-            <LayoutGrid size={20} />
-          </button>
+          <div className="flex items-center gap-3">
+            {queue.length > 0 && (
+              <div className="flex items-center gap-2 text-[9px] font-mono text-white/30 uppercase">
+                <span className="text-[#d4af37]">{pendingCount} pending</span>
+                <span>·</span>
+                <span className="text-green-400">{doneCount} done</span>
+                {errorCount > 0 && <><span>·</span><span className="text-red-400">{errorCount} error</span></>}
+              </div>
+            )}
+            <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors text-white/50">
+              <LayoutGrid size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-1 overflow-hidden">
           {/* Tabs */}
-          <div className="w-72 border-r border-white/5 bg-black/20 flex flex-col p-4 gap-1 overflow-y-auto scrollbar-hide">
+          <div className="w-56 border-r border-white/5 bg-black/20 flex flex-col p-4 gap-1 overflow-y-auto scrollbar-hide shrink-0">
             {[
               { id: 'takeout', label: 'Google Takeout', icon: <Database size={14} /> },
               { id: 'facebook', label: 'Facebook Export', icon: <Facebook size={14} /> },
@@ -186,144 +247,208 @@ export default function ImportDeck({ onImportComplete, onClose }: ImportDeckProp
             ))}
           </div>
 
-          {/* Main Content */}
-          <div className="flex-1 p-8 overflow-auto">
-            <div className="max-w-2xl mx-auto space-y-8">
-              {activeTab === 'inspector' && file ? (
-                <div className="space-y-4">
-                  <h3 className="text-[11px] font-mono uppercase text-white/40 flex items-center gap-2">
-                    <Archive size={14} />
-                    ZIP Contents Browser
-                  </h3>
-                  <div className="p-4 bg-black border border-white/5 rounded-2xl max-h-[500px] overflow-auto scrollbar-hide">
-                    <table className="w-full text-left font-mono text-[9px] uppercase tracking-tighter">
-                      <thead className="text-white/20 border-b border-white/5">
-                        <tr>
-                          <th className="pb-2">Path</th>
-                          <th className="pb-2 text-right">Size (B)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="text-white/50">
-                        {stats?.paths?.slice(0, 100).map((p: any, i: number) => (
-                          <tr key={i} className="border-b border-white/[0.02]">
-                            <td className="py-1 truncate max-w-xs">{p}</td>
-                            <td className="py-1 text-right">{Math.floor(Math.random() * 1000)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+          {/* Main Content — Drop Zone + Queue */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Drop Zone */}
+            <div className="p-6 border-b border-white/5">
+              <div
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onClick={() => fileInputRef.current?.click()}
+                className={`p-8 border-2 border-dashed rounded-3xl flex flex-col items-center gap-3 cursor-pointer transition-all relative group ${
+                  isDragging
+                    ? 'border-[#d4af37]/60 bg-[#d4af37]/5'
+                    : 'border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]'
+                }`}
+              >
+                <div className={`absolute -inset-1 bg-gradient-to-r from-[#d4af37] to-white/20 rounded-3xl blur opacity-0 transition-opacity ${isDragging ? 'opacity-15' : 'group-hover:opacity-10'}`} />
+                <FileUp size={36} className={`transition-colors ${isDragging ? 'text-[#d4af37]/60' : 'text-white/10 group-hover:text-[#d4af37]/30'}`} />
+                <div className="text-center">
+                  <p className="text-sm text-white/60 font-medium">
+                    {isDragging ? 'Release to add to queue' : 'Drop multiple files or click to select'}
+                  </p>
+                  <p className="text-[10px] font-mono text-white/20 mt-1 uppercase tracking-widest font-bold">
+                    {activeTab === 'csv' || activeTab === 'financial' || activeTab === 'whatsapp' ? 'Supports .csv, .txt, .xml' : 'Supports .zip, .json — multiple files accepted'}
+                  </p>
                 </div>
-              ) : (
-                <div className="p-12 border-2 border-dashed border-white/10 rounded-3xl flex flex-col items-center gap-4 bg-white/[0.02] relative group">
-                  <div className="absolute -inset-1 bg-gradient-to-r from-[#d4af37] to-white/20 rounded-3xl blur opacity-0 group-hover:opacity-10 transition-opacity" />
-                  <FileUp size={48} className="text-white/10 mb-2 group-hover:text-[#d4af37]/30 transition-colors" />
-                  <div className="text-center">
-                    <p className="text-sm text-white/60 font-medium">Drop evidence or select file</p>
-                    <p className="text-[10px] font-mono text-white/20 mt-1 uppercase tracking-widest font-bold">
-                      {activeTab === 'csv' || activeTab === 'financial' || activeTab === 'whatsapp' ? 'Supports .csv, .txt, .xml' : 'Supports .zip, .json'}
-                    </p>
-                  </div>
-                  <input 
-                    type="file" 
-                    onChange={handleFileChange}
-                    accept=".zip,.json,.csv,.txt,.xml"
-                    className="absolute inset-0 opacity-0 cursor-pointer"
-                  />
-                </div>
-              )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={handleFileInput}
+                  accept=".zip,.json,.csv,.txt,.xml"
+                  className="hidden"
+                />
+              </div>
 
-              {file && stats?.nodes === 0 && !isProcessing && (
-                <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center gap-3 text-yellow-500 text-xs">
-                  <ShieldAlert size={16} />
-                  <span>No intelligence items detected in this file for the current tab. Ensure the file format matches.</span>
-                </div>
-              )}
-
-              {file && activeTab !== 'csv' && activeTab !== 'inspector' && (
-                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-                  <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
-                    <div className="flex items-center gap-3">
-                      <Archive size={20} className="text-[#d4af37]" />
-                      <div>
-                        <p className="text-sm font-bold text-white">{file.name}</p>
-                        <p className="text-[10px] font-mono text-white/30 uppercase tracking-widest leading-none mt-1">Ready for analysis</p>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={runImport}
-                      disabled={isProcessing}
-                      className="px-6 py-2 bg-[#d4af37]/10 border border-[#d4af37]/30 text-[#d4af37] text-[10px] font-mono uppercase rounded-full hover:bg-[#d4af37]/20 flex items-center gap-2 transition-all"
+              {/* Queue Actions */}
+              {queue.length > 0 && (
+                <div className="flex items-center justify-between mt-4">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={runQueue}
+                      disabled={isRunning || pendingCount === 0}
+                      className="px-5 py-2 bg-[#d4af37] text-black text-[10px] font-bold uppercase tracking-widest rounded-full hover:scale-105 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
                     >
-                      {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <ChevronRight size={14} />}
-                      Run Deterministic Scan
+                      {isRunning ? <Loader2 size={12} className="animate-spin" /> : <ChevronRight size={12} />}
+                      {isRunning ? 'Scanning...' : `Run ${pendingCount} File${pendingCount !== 1 ? 's' : ''}`}
+                    </button>
+                    <button
+                      onClick={clearDone}
+                      className="px-4 py-2 bg-white/5 border border-white/10 text-white/40 text-[10px] font-mono uppercase rounded-full hover:bg-white/10 transition-all flex items-center gap-2"
+                    >
+                      <Trash2 size={11} />
+                      Clear Done
                     </button>
                   </div>
+                  <span className="text-[9px] font-mono text-white/20 uppercase">{queue.length} file{queue.length !== 1 ? 's' : ''} in queue</span>
+                </div>
+              )}
+            </div>
 
-                  {stats && (
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                        <p className="text-[9px] font-mono uppercase text-white/30 mb-1">Files Inspected</p>
-                        <p className="text-xl font-serif italic text-[#d4af37]">{stats.filesDetected}</p>
+            {/* Queue List + Detail Panel */}
+            <div className="flex flex-1 overflow-hidden">
+              {/* Queue List */}
+              <div className="w-72 border-r border-white/5 overflow-y-auto scrollbar-hide p-3 space-y-1 shrink-0">
+                {queue.length === 0 ? (
+                  <div className="p-6 text-center text-[10px] font-mono text-white/20 uppercase">Queue empty</div>
+                ) : (
+                  queue.map(item => (
+                    <button
+                      key={item.id}
+                      onClick={() => setSelectedId(item.id === selectedId ? null : item.id)}
+                      className={`w-full text-left p-3 rounded-xl border transition-all group ${
+                        selectedId === item.id
+                          ? 'bg-white/10 border-white/20'
+                          : 'bg-white/[0.02] border-white/5 hover:bg-white/5'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {statusIcon(item.status)}
+                          <span className="text-[10px] text-white/70 truncate font-mono">{item.file.name}</span>
+                        </div>
+                        <button
+                          onClick={e => { e.stopPropagation(); removeFromQueue(item.id); }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-red-400 text-white/30 transition-all shrink-0"
+                        >
+                          <X size={11} />
+                        </button>
                       </div>
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                        <p className="text-[9px] font-mono uppercase text-white/30 mb-1">Nodes Extracted</p>
-                        <p className="text-xl font-serif italic text-[#d4af37]">{stats.nodes}</p>
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span className={`text-[8px] font-mono uppercase tracking-widest ${
+                          item.status === 'done' ? 'text-green-400' :
+                          item.status === 'error' ? 'text-red-400' :
+                          item.status === 'processing' ? 'text-[#d4af37]' :
+                          'text-white/20'
+                        }`}>{statusLabel(item.status)}</span>
+                        {item.status === 'done' && (
+                          <span className="text-[8px] font-mono text-white/30">{item.nodes}n · {item.links}l</span>
+                        )}
                       </div>
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                        <p className="text-[9px] font-mono uppercase text-white/30 mb-1">Links Established</p>
-                        <p className="text-xl font-serif italic text-[#d4af37]">{stats.links}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Forensic Terminal Log */}
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between mb-2">
-                       <span className="text-[9px] font-mono uppercase tracking-[0.3em] text-white/30 font-bold">Forensic Log Stream</span>
-                       <span className="text-[9px] font-mono text-white/20">AGENT_PROTOCOL_v0.2.1-STABLE</span>
-                    </div>
-                    <div className="h-40 bg-black/60 rounded-2xl border border-white/5 p-4 font-mono text-[9px] overflow-y-auto scrollbar-hide space-y-1 shadow-inner">
-                      {logs.length === 0 ? (
-                        <div className="text-white/10 italic">Awaiting investigator input...</div>
-                      ) : (
-                        logs.map((log, i) => (
-                          <div key={i} className={`flex gap-3 leading-relaxed ${log.includes('ERROR') ? 'text-red-400' : log.includes('SUCCESS') ? 'text-green-400' : log.includes('WARNING') ? 'text-yellow-400' : 'text-white/30'}`}>
-                            <span className="opacity-20 shrink-0">[{i+1}]</span>
-                            <span className="break-all">{log}</span>
-                          </div>
-                        ))
-                      )}
-                      {isProcessing && (
-                        <div className="flex gap-2 items-center text-white/20 italic animate-pulse">
-                          <Loader2 size={10} className="animate-spin" />
-                          Streaming byte-data...
+                      {item.status === 'processing' && (
+                        <div className="mt-2 h-0.5 bg-white/5 rounded-full overflow-hidden">
+                          <div className="h-full bg-[#d4af37]/60 rounded-full animate-pulse w-2/3" />
                         </div>
                       )}
-                    </div>
-                  </div>
+                    </button>
+                  ))
+                )}
+              </div>
 
-                  {previewGraph && (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
+              {/* Detail Panel */}
+              <div className="flex-1 p-6 overflow-auto">
+                {selectedItem ? (
+                  <div className="space-y-5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-white">{selectedItem.file.name}</p>
+                        <p className="text-[10px] font-mono text-white/30 mt-0.5 uppercase">{(selectedItem.file.size / 1024).toFixed(1)} KB · {activeTab}</p>
+                      </div>
+                      {selectedItem.status === 'done' && selectedItem.graph && (
+                        <button
+                          onClick={() => onImportComplete(selectedItem.graph!)}
+                          className="px-5 py-2.5 bg-[#d4af37] text-black text-[10px] font-bold uppercase tracking-widest rounded-xl hover:scale-105 active:scale-95 transition-all shadow-xl"
+                        >
+                          Integrate into Workspace
+                        </button>
+                      )}
+                    </div>
+
+                    {selectedItem.status === 'done' && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                          <p className="text-[9px] font-mono uppercase text-white/30 mb-1">Nodes Extracted</p>
+                          <p className="text-2xl font-serif italic text-[#d4af37]">{selectedItem.nodes}</p>
+                        </div>
+                        <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                          <p className="text-[9px] font-mono uppercase text-white/30 mb-1">Links Established</p>
+                          <p className="text-2xl font-serif italic text-[#d4af37]">{selectedItem.links}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedItem.status === 'error' && (
+                      <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start gap-3 text-red-400 text-xs">
+                        <ShieldAlert size={16} className="shrink-0 mt-0.5" />
+                        <span>{selectedItem.error}</span>
+                      </div>
+                    )}
+
+                    {/* Log stream */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[9px] font-mono uppercase tracking-[0.3em] text-white/30 font-bold">Forensic Log Stream</span>
+                        <span className="text-[9px] font-mono text-white/20">AGENT_PROTOCOL_v0.2.1</span>
+                      </div>
+                      <div className="h-48 bg-black/60 rounded-2xl border border-white/5 p-4 font-mono text-[9px] overflow-y-auto scrollbar-hide space-y-1 shadow-inner">
+                        {selectedItem.logs.length === 0 ? (
+                          <div className="text-white/10 italic">Awaiting scan...</div>
+                        ) : (
+                          selectedItem.logs.map((log, i) => (
+                            <div key={i} className={`flex gap-3 leading-relaxed ${
+                              log.includes('ERROR') ? 'text-red-400' :
+                              log.includes('SUCCESS') ? 'text-green-400' :
+                              log.includes('WARNING') ? 'text-yellow-400' :
+                              'text-white/30'
+                            }`}>
+                              <span className="opacity-20 shrink-0">[{i+1}]</span>
+                              <span className="break-all">{log}</span>
+                            </div>
+                          ))
+                        )}
+                        {selectedItem.status === 'processing' && (
+                          <div className="flex gap-2 items-center text-white/20 italic animate-pulse">
+                            <Loader2 size={10} className="animate-spin" />
+                            Streaming byte-data...
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {selectedItem.status === 'done' && selectedItem.graph && (
+                      <div className="space-y-2">
                         <h3 className="text-[11px] font-mono uppercase text-white/40 flex items-center gap-2">
                           <Code size={14} />
                           Intelligence Graph JSON (Preview)
                         </h3>
-                        <button 
-                          onClick={() => onImportComplete(previewGraph)}
-                          className="px-6 py-3 bg-[#d4af37] text-black text-[11px] font-bold uppercase tracking-widest rounded-xl hover:scale-105 active:scale-95 transition-all shadow-xl"
-                        >
-                          Integrate into Current Workspace
-                        </button>
+                        <pre className="p-4 bg-black rounded-2xl border border-white/5 text-[9px] font-mono text-white/30 overflow-auto max-h-48 scrollbar-hide">
+                          {JSON.stringify(selectedItem.graph, null, 2)}
+                        </pre>
                       </div>
-                      <pre className="p-6 bg-black rounded-2xl border border-white/5 text-[10px] font-mono text-white/40 overflow-auto max-h-64 scrollbar-hide">
-                        {JSON.stringify(previewGraph, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              )}
+                    )}
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-center gap-3">
+                    <FileCheck size={40} className="text-white/10" />
+                    <p className="text-[11px] font-mono uppercase text-white/20 tracking-widest">Select a file from the queue to view details</p>
+                    {doneCount > 0 && (
+                      <p className="text-[10px] font-mono text-green-400/50">{doneCount} file{doneCount !== 1 ? 's' : ''} ready to integrate</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
