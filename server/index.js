@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url'
 import { createServer as createViteServer } from 'vite'
 import ingest from './routes/ingest.js'
 import aiRoutes from './routes/ai.js'
+import uploadRoute from './routes/upload.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -30,6 +31,7 @@ async function startServer() {
 
   app.use('/ingest', ingest)
   app.use('/api/ai', aiRoutes)
+  app.use('/api/upload', uploadRoute)
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
