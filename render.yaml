@@ -11,9 +11,13 @@ services:
         value: production
       - key: PORT
         value: "10000"
-      - key: OPENAI_API_KEY
-        value: sk-UGWQCaDpgRDfaqZQiJodQQ
       - key: OPENAI_BASE_URL
-        value: https://api.manus.im/api/llm-proxy/v1
-      - key: OPENAI_API_BASE
-        value: https://api.manus.im/api/llm-proxy/v1
+        value: https://api.openai.com/v1
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: VENICE_API_KEY
+        sync: false
+      - key: VITE_NEXUS_API_BASE_URL
+        sync: false

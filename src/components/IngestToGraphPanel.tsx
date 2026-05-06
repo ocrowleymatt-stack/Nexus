@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { mergeGraphs } from '../lib/intelligenceGraph'
 import { extractIntelligenceFromText, extractIntelligenceFromUrl } from '../services/geminiService'
+import { apiUrl } from '../services/apiBase'
 import { FileText, Link as LinkIcon, Upload, Search, Check, Loader2, File } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 
@@ -10,7 +11,7 @@ import { motion, AnimatePresence } from 'motion/react'
 async function uploadFileForIntelligence(file: File): Promise<any> {
   const formData = new FormData()
   formData.append('file', file)
-  const response = await fetch('/api/upload', {
+  const response = await fetch(apiUrl('/api/upload'), {
     method: 'POST',
     body: formData,
   })

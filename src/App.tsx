@@ -8,6 +8,7 @@ import { mergeGraphs } from './lib/intelligenceGraph'
 import { auth, loginWithGoogle } from './lib/firebase'
 import { onAuthStateChanged, User, signOut } from 'firebase/auth'
 import { saveProject, getProjects, deleteProject } from './lib/firestoreService'
+import { DashboardStats, fetchDashboardStats } from './services/statsService'
 
 import { NarrativeSidebar } from './components/NarrativeSidebar'
 import ReportingDeck from './components/ReportingDeck'
@@ -32,6 +33,9 @@ const defaultVisualSettings: VisualSettings = {
   theme: 'default',
   nodeShape: 'circle',
   linkStyle: 'default',
+  layoutTemplate: 'force',
+  mapDepth: 'relief',
+  autoSpatialExpand: true,
   showDataFlags: true
 }
 
@@ -48,7 +52,7 @@ export default function App() {
   const [isVeniceLoading, setIsVeniceLoading] = useState(false)
   const [visualSettings, setVisualSettings] = useState<VisualSettings>(() => {
     const cached = localStorage.getItem('nexus_visual_settings');
-    return cached ? JSON.parse(cached) : defaultVisualSettings;
+    return cached ? { ...defaultVisualSettings, ...JSON.parse(cached) } : defaultVisualSettings;
   })
   
   // Auth & Projects State
@@ -66,6 +70,7 @@ export default function App() {
   const [autoGrow, setAutoGrow] = useState(false)
   const [forensicReports, setForensicReports] = useState<Record<string, string>>({})
   const [loadingForensic, setLoadingForensic] = useState<Record<string, boolean>>({})
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null)
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -89,6 +94,24 @@ export default function App() {
     const list = await getProjects()
     setProjects(list)
   }
+
+
+  useEffect(() => {
+    let cancelled = false
+
+    const refreshStats = async () => {
+      const stats = await fetchDashboardStats()
+      if (!cancelled) setDashboardStats(stats)
+    }
+
+    refreshStats()
+    const interval = window.setInterval(refreshStats, 30000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [])
 
   const handleDownloadBackup = () => {
     const data = {
@@ -346,6 +369,13 @@ export default function App() {
     links: graph.links
   }
 
+  const liveStats = dashboardStats ?? {
+    investigations: user ? projects.length : currentProjectId ? 1 : 0,
+    files: graph.nodes.length,
+    dataPoints: graph.nodes.length + graph.links.length,
+    source: 'local' as const,
+  }
+
   const [showLeftSidebar, setShowLeftSidebar] = useState(true)
   const [showRightSidebar, setShowRightSidebar] = useState(false) // Right sidebar hidden by default on mobile
 
@@ -566,11 +596,30 @@ export default function App() {
         </div>
 
         <div className="border-t border-white/10 p-6 bg-black/40">
-          <div className="flex items-center gap-2 font-mono text-[10px] uppercase text-white/30 tracking-widest">
-            <FileText size={14} />
-            Network Topology
+          <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase text-white/30 tracking-widest">
+            <div className="flex items-center gap-2">
+              <FileText size={14} />
+              Live Dashboard
+            </div>
+            <span className={`rounded-full border px-2 py-0.5 text-[8px] ${liveStats.source === 'backend' ? 'border-green-500/30 text-green-400/70' : 'border-white/10 text-white/30'}`}>
+              {liveStats.source === 'backend' ? 'API' : 'Local'}
+            </span>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-white/5 border border-white/5 p-3 transition-colors hover:border-white/10">
+              <div className="text-2xl font-black text-white">{liveStats.investigations}</div>
+              <div className="font-mono text-[8px] uppercase tracking-wider text-white/40">Investigations</div>
+            </div>
+            <div className="rounded-xl bg-white/5 border border-white/5 p-3 transition-colors hover:border-white/10">
+              <div className="text-2xl font-black text-white">{liveStats.files}</div>
+              <div className="font-mono text-[8px] uppercase tracking-wider text-white/40">Files</div>
+            </div>
+            <div className="rounded-xl bg-white/5 border border-white/5 p-3 transition-colors hover:border-white/10">
+              <div className="text-2xl font-black text-white">{liveStats.dataPoints}</div>
+              <div className="font-mono text-[8px] uppercase tracking-wider text-white/40">Data Points</div>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3">
             <div className="rounded-xl bg-white/5 border border-white/5 p-4 transition-colors hover:border-white/10">
               <div className="text-3xl font-black text-white">{graph.nodes.length}</div>
               <div className="font-mono text-[9px] uppercase tracking-wider text-white/40">Entities</div>

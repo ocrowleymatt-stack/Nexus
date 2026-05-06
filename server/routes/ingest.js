@@ -9,6 +9,16 @@ const store = {
   entities: []
 }
 
+export function getIngestStats() {
+  return {
+    investigations: store.sources.length,
+    files: store.sources.length,
+    dataPoints: store.claims.length + store.entities.length,
+    claims: store.claims.length,
+    entities: store.entities.length
+  }
+}
+
 function makeId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`
 }

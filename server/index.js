@@ -3,7 +3,7 @@ import cors from 'cors'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { createServer as createViteServer } from 'vite'
-import ingest from './routes/ingest.js'
+import ingest, { getIngestStats } from './routes/ingest.js'
 import aiRoutes from './routes/ai.js'
 import uploadRoute from './routes/upload.js'
 
@@ -30,6 +30,9 @@ async function startServer() {
   })
 
   app.use('/ingest', ingest)
+  app.get('/api/stats', (_req, res) => {
+    res.json(getIngestStats())
+  })
   app.use('/api/ai', aiRoutes)
   app.use('/api/upload', uploadRoute)
 
