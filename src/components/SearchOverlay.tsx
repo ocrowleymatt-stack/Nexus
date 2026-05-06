@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Search, Loader2, Cpu, Globe, Database, FileUp, UploadCloud, Archive, Box, CheckCircle, ShieldCheck, Shield, X } from 'lucide-react';
 import Papa from 'papaparse';
 import { analyzeZipFile, getZipFileContent } from '../services/zipService';
+import { loginWithGoogleForDrive } from '../lib/firebase';
 
 interface SearchOverlayProps {
   onSearch: (query: string) => void;
@@ -43,38 +44,17 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
     }
   };
 
-  // Simple Google OAuth Popup
-  const handleAuthorize = () => {
-    const clientId = (import.meta as any).env.VITE_GOOGLE_CLIENT_ID;
-    if (!clientId) {
-      alert("Google Client ID not configured in environment.");
-      return;
+  // Google Drive auth via Firebase — reuses the existing Firebase OAuth client,
+  // no separate VITE_GOOGLE_CLIENT_ID required.
+  const handleAuthorize = async () => {
+    try {
+      const token = await loginWithGoogleForDrive();
+      onDriveAuth(token);
+      setMode('search');
+    } catch (err: any) {
+      console.error('Drive auth failed:', err);
+      alert(`Google Drive sign-in failed: ${err?.message ?? 'Unknown error'}`);
     }
-
-    const scope = "https://www.googleapis.com/auth/drive.readonly";
-    const redirectUri = window.location.origin;
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${scope}`;
-    
-    const popup = window.open(authUrl, "_blank", "width=600,height=600");
-    
-    // Listen for the token in the fragment
-    const interval = setInterval(() => {
-      try {
-        if (popup?.location.hash) {
-          const params = new URLSearchParams(popup.location.hash.substring(1));
-          const token = params.get("access_token");
-          if (token) {
-            onDriveAuth(token);
-            clearInterval(interval);
-            popup.close();
-            setMode('search');
-          }
-        }
-      } catch (e) {
-        // Cross-origin might throw until the popup redirects back to redirectUri
-      }
-      if (popup?.closed) clearInterval(interval);
-    }, 500);
   };
 
   const handleFile = useCallback(async (file: File) => {
