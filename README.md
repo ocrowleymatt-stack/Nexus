@@ -18,3 +18,19 @@ View your app in AI Studio: https://ai.studio/apps/21300dad-de87-4d82-82cb-d401d
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Frontend/backend API wiring
+
+By default the React app calls the Express API on the same origin (`/api/...`). If
+`nexus-backend` is deployed as a separate Render Web Service, set
+`VITE_NEXUS_API_BASE_URL` to that service URL before building the frontend, for
+example:
+
+```bash
+VITE_NEXUS_API_BASE_URL="https://nexus-backend.onrender.com" npm run build
+```
+
+The server exposes `GET /api/stats`, which the UI polls every 30 seconds for the
+live Investigations, Files, and Data Points counters. If the backend is not
+reachable, the UI falls back to local workspace counts and labels the widget as
+`Local` instead of `API`.

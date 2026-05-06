@@ -26,6 +26,7 @@ import {
   clientForensicSearchNode,
   clientTestHypothesis,
 } from "./geminiClientService";
+import { apiUrl } from "./apiBase";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,7 +53,7 @@ async function tryServerJson(response: Response): Promise<any | null> {
  */
 async function tryServer(path: string, body: object): Promise<any | null> {
   try {
-    const response = await fetch(path, {
+    const response = await fetch(apiUrl(path), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
