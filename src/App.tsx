@@ -13,6 +13,8 @@ import { NarrativeSidebar } from './components/NarrativeSidebar'
 import ReportingDeck from './components/ReportingDeck'
 import VisualSettingsPanel from './components/VisualSettingsPanel'
 import ImportDeck from './components/ImportDeck'
+import QuantumSearchPanel from './components/QuantumSearchPanel'
+import CorroborationPanel from './components/CorroborationPanel'
 import { VisualSettings } from './types'
 import { NexusGraph } from './types/graph'
 
@@ -62,7 +64,7 @@ export default function App() {
   const [projectName, setProjectName] = useState('New Investigation')
   const [isSaving, setIsSaving] = useState(false)
   const [showImportDeck, setShowImportDeck] = useState(false)
-  const [activeTab, setActiveTab] = useState<'ingest' | 'projects' | 'reporting' | 'visuals'>('ingest')
+  const [activeTab, setActiveTab] = useState<'ingest' | 'projects' | 'reporting' | 'visuals' | 'quantum' | 'corroboration'>('ingest')
   const [autoGrow, setAutoGrow] = useState(false)
   const [forensicReports, setForensicReports] = useState<Record<string, string>>({})
   const [loadingForensic, setLoadingForensic] = useState<Record<string, boolean>>({})
@@ -457,7 +459,7 @@ export default function App() {
                 Intel Ingest
               </button>
               
-              <div className="grid grid-cols-4 gap-1">
+              <div className="grid grid-cols-3 gap-1">
                 <button 
                   onClick={() => setActiveTab('ingest')}
                    className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'ingest' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
@@ -481,6 +483,18 @@ export default function App() {
                   className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'visuals' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
                 >
                   Style
+                </button>
+                <button 
+                  onClick={() => setActiveTab('quantum')}
+                  className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'quantum' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
+                >
+                  Quantum
+                </button>
+                <button 
+                  onClick={() => setActiveTab('corroboration')}
+                  className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'corroboration' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
+                >
+                  Corroborate
                 </button>
               </div>
 
@@ -560,6 +574,10 @@ export default function App() {
               <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-6">Visual Configuration</h3>
               <VisualSettingsPanel settings={visualSettings} onChange={setVisualSettings} />
             </div>
+          ) : activeTab === 'quantum' ? (
+            <QuantumSearchPanel setGraph={setGraph} />
+          ) : activeTab === 'corroboration' ? (
+            <CorroborationPanel graph={graph} setGraph={setGraph} />
           ) : (
             <IngestToGraphPanel setGraph={setGraph} />
           )}

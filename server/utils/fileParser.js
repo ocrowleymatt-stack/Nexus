@@ -15,7 +15,7 @@
 
 import { createRequire } from 'module';
 import mammoth from 'mammoth';
-import XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import path from 'path';
 
 const require = createRequire(import.meta.url);
@@ -77,41 +77,38 @@ async function parseWord(buffer) {
 }
 
 /**
- * Extract text from a spreadsheet (XLS/XLSX/CSV/TSV) buffer.
+ * Extract text from a spreadsheet (XLS/XLSX/ODS) buffer using ExcelJS.
+ * ExcelJS is actively maintained and free of the xlsx CVEs.
  */
-function parseSpreadsheet(buffer, ext) {
+async function parseSpreadsheet(buffer) {
   try {
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
     const sheets = [];
-    for (const sheetName of workbook.SheetNames) {
-      const ws = workbook.Sheets[sheetName];
-      const csv = XLSX.utils.sheet_to_csv(ws);
-      if (csv.trim()) sheets.push(`=== Sheet: ${sheetName} ===\n${csv}`);
-    }
-    return sheets.join('\n\n');
+    workbook.eachSheet((sheet) => {
+      const rows = [];
+      sheet.eachRow((row) => {
+        const cells = [];
+        row.eachCell({ includeEmpty: true }, (cell) => {
+          cells.push(String(cell.text ?? ''));
+        });
+        rows.push(cells.join(','));
+      });
+      if (rows.length) sheets.push(`=== Sheet: ${sheet.name} ===\n${rows.join('\n')}`);
+    });
+    return sheets.join('\n\n') || '';
   } catch (e) {
     console.warn('[fileParser] Spreadsheet parse failed:', e.message);
-    // Fallback: treat as raw text
-    return buffer.toString('utf8');
+    return extractReadableStrings(buffer);
   }
 }
 
 /**
- * Attempt to extract text from a PPTX buffer using XLSX (it can read OOXML).
- * Falls back to a raw text scan for embedded strings.
+ * Extract readable text from a PPTX buffer.
+ * PPTX is a ZIP of XML — we scan the buffer for readable ASCII strings
+ * as a best-effort approach (no xlsx dependency needed).
  */
 async function parsePptx(buffer) {
-  try {
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
-    const texts = [];
-    for (const sheetName of workbook.SheetNames) {
-      const ws = workbook.Sheets[sheetName];
-      const csv = XLSX.utils.sheet_to_csv(ws);
-      if (csv.trim()) texts.push(csv);
-    }
-    if (texts.length) return texts.join('\n\n');
-  } catch (_) {}
-  // Fallback: scan buffer for readable ASCII strings
   return extractReadableStrings(buffer);
 }
 
