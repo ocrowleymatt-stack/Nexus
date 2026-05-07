@@ -18,6 +18,9 @@ const DEFAULT_VISUAL_SETTINGS: VisualSettings = {
   layoutTemplate: 'force',
   mapDepth: 'relief',
   autoSpatialExpand: true,
+  nodeScale: 1,
+  labelDensity: 'balanced',
+  linkParticles: true,
   showDataFlags: true,
 };
 
@@ -107,9 +110,9 @@ interface NetworkMapProps {
   visualSettings?: VisualSettings;
 }
 
-export const NetworkMap: React.FC<NetworkMapProps> = ({ 
-  data, 
-  onNodeClick, 
+export const NetworkMap: React.FC<NetworkMapProps> = ({
+  data,
+  onNodeClick,
   selectedNode,
   visualSettings = DEFAULT_VISUAL_SETTINGS
 }) => {
@@ -154,7 +157,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
       if (fgRef.current && data.nodes.length > 0) {
         fgRef.current.zoomToFit(1200, 200);
       }
-    }, 45000); 
+    }, 45000);
   }, [data.nodes.length]);
 
   React.useEffect(() => {
@@ -163,7 +166,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
     window.addEventListener('mousedown', handleEvents);
     window.addEventListener('touchstart', handleEvents);
     window.addEventListener('wheel', handleEvents);
-    
+
     resetInactivityTimer();
 
     return () => {
@@ -185,7 +188,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
       fgRef.current.d3Force('link').distance(isTemplateLocked ? 120 : 90 * spatialMultiplier).strength(isTemplateLocked ? 0.25 : 0.85);
       fgRef.current.d3Force('center').strength(isTemplateLocked ? 0.015 : 0.04);
       fgRef.current.d3Force('collide', forceCollide(settings.mapDepth === 'deep' ? 50 : 36));
-      
+
       // Warm up the simulation
       fgRef.current.d3ReheatSimulation();
     }
@@ -196,14 +199,14 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
       if (data.centralNode) {
         // Track last centered to avoid fighting user zoom during updates
         lastCenteredNodeRef.current = data.centralNode;
-        
+
         const graphNodes = typeof fgRef.current.graphData === 'function' ? fgRef.current.graphData().nodes : graphData.nodes;
-        const node = graphNodes.find((n: any) => 
-          n.id === data.centralNode || 
-          n.name === data.centralNode || 
+        const node = graphNodes.find((n: any) =>
+          n.id === data.centralNode ||
+          n.name === data.centralNode ||
           (n.label && n.label === data.centralNode)
         );
-        
+
         if (node && typeof node.x === 'number' && !isNaN(node.x)) {
           fgRef.current.centerAt(node.x, node.y, 1000);
           fgRef.current.zoom(2.0, 1000);
@@ -228,7 +231,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
         lastCenteredNodeRef.current = null;
       }
     }
-  }, [data.centralNode, data.nodes.length > 0]); 
+  }, [data.centralNode, data.nodes.length > 0]);
 
   React.useEffect(() => {
     if (!containerRef.current) return;
@@ -252,7 +255,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
     // Copy nodes so spatial templates can pin positions without mutating saved graph data.
     const nodes = data.nodes.map(node => ({ ...node }));
     const nodeIds = new Set(nodes.map(n => n.id));
-    
+
     // Filter invalid links
     const links = data.links.filter(link => {
       const s = link.source && typeof link.source === 'object' ? (link.source as any).id : link.source;
@@ -333,14 +336,14 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
         >
           <ZoomOut size={18} className="group-hover:scale-110 transition-transform" />
         </button>
-        <button 
+        <button
           onClick={handleRecenter}
           className={`p-2 rounded-lg bg-white/5 border border-white/10 text-white/50 transition-all group ${settings.theme === 'gold' ? 'hover:text-[#d4af37] hover:border-[#d4af37]/50' : 'hover:text-green-500 hover:border-green-500/50'}`}
           title="Recentre View"
         >
           <Target size={18} className="group-hover:scale-110 transition-transform" />
         </button>
-        <button 
+        <button
           onClick={toggleFullscreen}
           className={`p-2 rounded-lg bg-white/5 border border-white/10 text-white/50 transition-all group ${settings.theme === 'gold' ? 'hover:text-[#d4af37] hover:border-[#d4af37]/50' : 'hover:text-green-500 hover:border-green-500/50'}`}
           title={isFullscreen ? "Exit Fullscreen" : "Fullscreen Map"}
@@ -394,7 +397,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
           nodeLabel="name"
           nodeColor={(node: any) => {
             const isCentral = node.id === data.centralNode || node.name === data.centralNode;
-            
+
             if (settings.theme === 'gold') {
                if (isCentral) return '#d4af37';
                switch (node.type) {
@@ -433,8 +436,8 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
             }
           }}
           nodeVal={(node: any) => {
-            if (node.id === data.centralNode || node.name === data.centralNode) return 20;
-            return node.val || 5;
+            const base = node.id === data.centralNode || node.name === data.centralNode ? 20 : node.val || 5;
+            return base * settings.nodeScale;
           }}
           linkColor={() => {
             if (settings.theme === 'gold') return 'rgba(212, 175, 55, 0.2)';
@@ -445,7 +448,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
             const base = settings.linkStyle === 'thick' ? 5 : settings.linkStyle === 'thin' ? 1 : 3;
             return base;
           }}
-          linkDirectionalParticles={settings.theme === 'neon' ? 8 : 4}
+          linkDirectionalParticles={settings.linkParticles ? (settings.theme === 'neon' ? 8 : 4) : 0}
           linkDirectionalParticleSpeed={0.008}
           linkDirectionalParticleWidth={settings.linkStyle === 'thick' ? 4 : 2}
           linkDirectionalArrowLength={6}
@@ -464,12 +467,12 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
           onZoom={resetInactivityTimer}
           nodeCanvasObject={(node: any, ctx, globalScale) => {
             const label = String(node.name || node.label || node.id || 'Unknown');
-            
+
             if (typeof node.x !== 'number' || typeof node.y !== 'number' || isNaN(node.x) || isNaN(node.y)) return;
             const validScale = typeof globalScale === 'number' && !isNaN(globalScale) && globalScale > 0 ? globalScale : 1;
 
             const isCentral = node.id === data.centralNode || node.name === data.centralNode;
-            
+
             // Determine Color
             let fillStyle = '#d4af37';
             if (settings.theme === 'gold') {
@@ -485,7 +488,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
 
             const depth = typeof node.zDepth === 'number' ? node.zDepth : 0;
             const depthScale = settings.mapDepth === 'deep' ? 1 + depth * 0.7 : settings.mapDepth === 'relief' ? 1 + depth * 0.35 : 1;
-            const size = (isCentral ? 8 : 5) * depthScale;
+            const size = (isCentral ? 8 : 5) * depthScale * settings.nodeScale;
             const shadowOffset = settings.mapDepth === 'flat' ? 0 : (settings.mapDepth === 'deep' ? 12 : 7) * depth / validScale;
 
             if (shadowOffset > 0) {
@@ -508,7 +511,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
             }
 
             ctx.fillStyle = fillStyle;
-            
+
             // Draw Shape
             ctx.beginPath();
             const shape = settings.nodeShape;
@@ -546,7 +549,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
             if (settings.showDataFlags) {
                const hasSources = node.source_refs && node.source_refs.length > 0;
                const hasDescription = !!node.description;
-               
+
                if (hasSources || hasDescription) {
                   ctx.fillStyle = settings.theme === 'gold' ? '#fcd34d' : '#ffffff';
                   ctx.beginPath();
@@ -556,14 +559,17 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
             }
 
             // Label
-            const fontSize = Math.max(1, Math.min(60, 11 / validScale));
-            ctx.font = `${fontSize}px "JetBrains Mono"`;
-            ctx.fillStyle = settings.theme === 'gold' ? '#fef08a' : 'white';
-            if (settings.theme === 'monochrome') ctx.fillStyle = '#f3f4f6';
-            
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(label, node.x, node.y + (12 / validScale));
+            const shouldRenderLabel = settings.labelDensity === 'dense' || isCentral || (settings.labelDensity === 'balanced' && validScale > 0.45);
+            if (shouldRenderLabel) {
+              const fontSize = Math.max(1, Math.min(60, 11 / validScale));
+              ctx.font = `${fontSize}px "JetBrains Mono"`;
+              ctx.fillStyle = settings.theme === 'gold' ? '#fef08a' : 'white';
+              if (settings.theme === 'monochrome') ctx.fillStyle = '#f3f4f6';
+
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(label, node.x, node.y + (12 / validScale));
+            }
           }}
           nodePointerAreaPaint={(node: any, color, ctx) => {
             if (typeof node.x !== 'number' || typeof node.y !== 'number' || isNaN(node.x) || isNaN(node.y)) return;
@@ -577,7 +583,7 @@ export const NetworkMap: React.FC<NetworkMapProps> = ({
           d3AlphaMin={0.005}
         />
       </ErrorBoundary>
-      
+
       {/* HUD Elements */}
       <div className="absolute bottom-4 left-4 z-10 flex gap-4 text-[9px] font-mono text-white/20 uppercase tracking-widest">
         <div className="flex items-center gap-2">

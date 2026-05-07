@@ -41,6 +41,12 @@ const DEPTH_MODELS = [
   { id: 'deep', name: 'Deep' },
 ] as const;
 
+const LABEL_DENSITIES = [
+  { id: 'minimal', name: 'Minimal' },
+  { id: 'balanced', name: 'Balanced' },
+  { id: 'dense', name: 'Dense' },
+] as const;
+
 export default function VisualSettingsPanel({ settings, onChange }: VisualSettingsPanelProps) {
   const updateSetting = <K extends keyof VisualSettings>(key: K, value: VisualSettings[K]) => {
     onChange({ ...settings, [key]: value });
@@ -182,6 +188,49 @@ export default function VisualSettingsPanel({ settings, onChange }: VisualSettin
         </div>
       </div>
 
+      {/* Node Scale */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between text-white/40 mb-1">
+          <div className="flex items-center gap-2">
+            <Circle size={14} />
+            <h4 className="text-[10px] font-bold uppercase tracking-[0.2em]">Node Scale</h4>
+          </div>
+          <span className="text-[9px] font-mono text-[#d4af37]">{settings.nodeScale.toFixed(1)}x</span>
+        </div>
+        <input
+          type="range"
+          min="0.6"
+          max="2"
+          step="0.1"
+          value={settings.nodeScale}
+          onChange={(event) => updateSetting('nodeScale', Number(event.target.value))}
+          className="w-full accent-[#d4af37]"
+        />
+      </div>
+
+      {/* Label Density */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 text-white/40 mb-1">
+          <Info size={14} />
+          <h4 className="text-[10px] font-bold uppercase tracking-[0.2em]">Label Density</h4>
+        </div>
+        <div className="flex bg-white/5 p-1 rounded-xl border border-white/5">
+          {LABEL_DENSITIES.map((density) => (
+            <button
+              key={density.id}
+              onClick={() => updateSetting('labelDensity', density.id)}
+              className={`flex-1 py-2 rounded-lg text-[9px] font-bold uppercase tracking-widest transition-all ${
+                settings.labelDensity === density.id
+                  ? 'bg-white/10 text-white shadow-lg'
+                  : 'text-white/30 hover:text-white/50'
+              }`}
+            >
+              {density.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Toggles */}
       <div className="space-y-4">
         <div className="flex items-center gap-2 text-white/40 mb-1">
@@ -198,6 +247,19 @@ export default function VisualSettingsPanel({ settings, onChange }: VisualSettin
             className={`w-10 h-5 rounded-full relative cursor-pointer transition-colors ${settings.showDataFlags ? 'bg-[#d4af37]/50' : 'bg-white/10'}`}
           >
             <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${settings.showDataFlags ? 'right-1' : 'left-1'}`} />
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-white/5 border border-white/5 flex items-center justify-between group">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/80">Link Particles</span>
+            <span className="text-[9px] font-mono text-white/30 uppercase">Animate correlation flow along edges</span>
+          </div>
+          <div
+            onClick={() => updateSetting('linkParticles', !settings.linkParticles)}
+            className={`w-10 h-5 rounded-full relative cursor-pointer transition-colors ${settings.linkParticles ? 'bg-[#d4af37]/50' : 'bg-white/10'}`}
+          >
+            <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${settings.linkParticles ? 'right-1' : 'left-1'}`} />
           </div>
         </div>
 

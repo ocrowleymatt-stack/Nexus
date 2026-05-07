@@ -15,6 +15,7 @@ import ReportingDeck from './components/ReportingDeck'
 import VisualSettingsPanel from './components/VisualSettingsPanel'
 import ImportDeck from './components/ImportDeck'
 import { VisualSettings } from './types'
+import InterrogationPanel from './components/InterrogationPanel'
 import { NexusGraph } from './types/graph'
 
 type GraphData = {
@@ -36,6 +37,9 @@ const defaultVisualSettings: VisualSettings = {
   layoutTemplate: 'force',
   mapDepth: 'relief',
   autoSpatialExpand: true,
+  nodeScale: 1,
+  labelDensity: 'balanced',
+  linkParticles: true,
   showDataFlags: true
 }
 
@@ -54,7 +58,7 @@ export default function App() {
     const cached = localStorage.getItem('nexus_visual_settings');
     return cached ? { ...defaultVisualSettings, ...JSON.parse(cached) } : defaultVisualSettings;
   })
-  
+
   // Auth & Projects State
   const [user, setUser] = useState<User | null>(() => {
     const cached = localStorage.getItem('nexus_user_hint');
@@ -66,7 +70,7 @@ export default function App() {
   const [projectName, setProjectName] = useState('New Investigation')
   const [isSaving, setIsSaving] = useState(false)
   const [showImportDeck, setShowImportDeck] = useState(false)
-  const [activeTab, setActiveTab] = useState<'ingest' | 'projects' | 'reporting' | 'visuals'>('ingest')
+  const [activeTab, setActiveTab] = useState<'ingest' | 'projects' | 'interrogate' | 'reporting' | 'visuals'>('ingest')
   const [autoGrow, setAutoGrow] = useState(false)
   const [forensicReports, setForensicReports] = useState<Record<string, string>>({})
   const [loadingForensic, setLoadingForensic] = useState<Record<string, boolean>>({})
@@ -255,7 +259,7 @@ export default function App() {
     const cachedGraph = localStorage.getItem('nexus_last_graph');
     const cachedName = localStorage.getItem('nexus_last_project_name');
     const cachedCentral = localStorage.getItem('nexus_last_central');
-    
+
     if (cachedGraph && graph.nodes.length === 0) {
       try {
         const parsed = JSON.parse(cachedGraph);
@@ -383,7 +387,7 @@ export default function App() {
     <div className="relative flex h-screen w-screen bg-[#050505] text-white selection:bg-[#d4af37] selection:text-black overflow-hidden font-sans">
       {/* Toggle Controls */}
       <div className="fixed top-24 left-6 z-[60] flex flex-col gap-2">
-        <button 
+        <button
           onClick={() => setShowLeftSidebar(!showLeftSidebar)}
           className={`pointer-events-auto p-3 rounded-2xl bg-[#111] border border-white/10 text-white/50 hover:text-[#d4af37] hover:border-[#d4af37]/50 transition-all shadow-2xl flex items-center gap-2 group ${showLeftSidebar ? 'opacity-0 -translate-x-10 pointer-events-none' : 'opacity-100 translate-x-0'}`}
           title="Toggle Tools"
@@ -394,7 +398,7 @@ export default function App() {
       </div>
 
       <div className="fixed top-24 right-6 z-[60] flex flex-col gap-2 items-end">
-        <button 
+        <button
           onClick={() => {
             setShowRightSidebar(!showRightSidebar);
             if (!showRightSidebar && !selectedNode && graph.nodes.length > 0) {
@@ -417,9 +421,9 @@ export default function App() {
               <div className="relative">
                 <div className="w-10 h-10 rounded-full bg-[#d4af37] flex items-center justify-center shadow-[0_0_20px_rgba(212,175,55,0.4)] overflow-hidden border border-white/20">
                   {/* Persona Face - Amateur Photography Style */}
-                  <img 
-                    src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200&h=200" 
-                    alt="Agent" 
+                  <img
+                    src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200&h=200"
+                    alt="Agent"
                     className="w-full h-full object-cover grayscale opacity-80 mix-blend-multiply border-none"
                     referrerPolicy="no-referrer"
                   />
@@ -437,7 +441,7 @@ export default function App() {
               {authLoading ? (
                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" />
               ) : user ? (
-                <button 
+                <button
                   onClick={() => signOut(auth)}
                   className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/40 hover:text-white"
                   title="Logout"
@@ -445,7 +449,7 @@ export default function App() {
                   <LogOut size={16} />
                 </button>
               ) : (
-                <button 
+                <button
                   onClick={loginWithGoogle}
                   className="flex items-center gap-2 px-3 py-1.5 bg-[#d4af37] text-black rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all shadow-[0_0_15px_rgba(212,175,55,0.4)]"
                 >
@@ -453,7 +457,7 @@ export default function App() {
                   ADR Login
                 </button>
               )}
-              <button 
+              <button
                 onClick={() => setShowLeftSidebar(false)}
                 className="p-2 hover:bg-white/10 rounded-xl text-white/30 hover:text-white transition-colors"
               >
@@ -471,13 +475,13 @@ export default function App() {
           </button>
 
           <div className="space-y-4">
-            <input 
+            <input
               value={projectName}
               onChange={(e) => setProjectName(e.target.value)}
               className="w-full bg-transparent border-none text-2xl font-serif italic font-black tracking-tight text-[#d4af37] focus:outline-none focus:ring-0 placeholder:text-white/10"
               placeholder="Project Name"
             />
-            
+
             <div className="flex flex-col gap-2">
               <button
                 onClick={() => setOverlayOpen(true)}
@@ -486,27 +490,33 @@ export default function App() {
                 <SearchIcon size={14} />
                 Intel Ingest
               </button>
-              
-              <div className="grid grid-cols-4 gap-1">
-                <button 
+
+              <div className="grid grid-cols-5 gap-1">
+                <button
                   onClick={() => setActiveTab('ingest')}
-                   className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'ingest' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
+                  className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'ingest' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
                 >
-                   Index
+                  Index
                 </button>
-                <button 
+                <button
                   onClick={() => setActiveTab('projects')}
                   className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'projects' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
                 >
                   Vault
                 </button>
-                <button 
+                <button
+                  onClick={() => setActiveTab('interrogate')}
+                  className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'interrogate' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
+                >
+                  Query
+                </button>
+                <button
                   onClick={() => setActiveTab('reporting')}
                   className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'reporting' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
                 >
                   Brief
                 </button>
-                <button 
+                <button
                   onClick={() => setActiveTab('visuals')}
                   className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-bold uppercase tracking-widest border transition-all ${activeTab === 'visuals' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
                 >
@@ -515,7 +525,7 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2 pt-2 border-t border-white/5">
-                <button 
+                <button
                   onClick={startNewProject}
                   className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-[9px] font-bold uppercase tracking-widest text-white/50 border border-white/5"
                   title="New Investigation"
@@ -523,7 +533,7 @@ export default function App() {
                   <Plus size={12} />
                   New Session
                 </button>
-                <button 
+                <button
                   disabled={!user || isSaving}
                   onClick={() => handleSave()}
                   className="p-2 bg-white/5 hover:bg-white/10 rounded-lg border border-white/5 transition-all disabled:opacity-50"
@@ -551,7 +561,7 @@ export default function App() {
                 </div>
               ) : (
                 projects.map(p => (
-                  <div 
+                  <div
                     key={p.id}
                     onClick={() => loadProject(p)}
                     className={`group relative p-4 rounded-2xl border transition-all cursor-pointer ${currentProjectId === p.id ? 'bg-[#d4af37]/10 border-[#d4af37]/30' : 'bg-white/5 border-white/5 hover:border-white/10'}`}
@@ -560,7 +570,7 @@ export default function App() {
                     <div className="text-[10px] font-mono text-white/30 mt-1 uppercase">
                       {p.graph.nodes.length} nodes · {p.graph.links.length} links
                     </div>
-                    <button 
+                    <button
                       onClick={(e) => handleDeleteProject(p.id, e)}
                       className="absolute right-4 top-1/2 -translate-y-1/2 p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"
                     >
@@ -570,12 +580,14 @@ export default function App() {
                 ))
               )}
             </div>
+          ) : activeTab === 'interrogate' ? (
+            <InterrogationPanel graph={graph} setGraph={setGraph} onSelectNode={handleNodeClick} />
           ) : activeTab === 'reporting' ? (
             <div className="p-6">
               <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-6">Reporting & Artifacts</h3>
-              <ReportingDeck 
-                graph={graph} 
-                projectName={projectName} 
+              <ReportingDeck
+                graph={graph}
+                projectName={projectName}
                 onExpand={handleExpandGraph}
                 isExpanding={isSearching}
                 autoGrow={autoGrow}
@@ -665,7 +677,7 @@ export default function App() {
             {selectedNode && (
               <div className="h-1.5 w-1.5 rounded-full bg-[#d4af37] animate-pulse shadow-[0_0_10px_rgba(212,175,55,1)]" />
             )}
-            <button 
+            <button
               onClick={() => {
                 setShowRightSidebar(false);
                 setSelectedNode(null);
@@ -676,7 +688,7 @@ export default function App() {
             </button>
           </div>
         </div>
-        
+
         {selectedNode ? (
           <div className="mt-8 space-y-6 overflow-y-auto custom-scrollbar flex-1 pr-2">
             <div className="space-y-4">
@@ -699,7 +711,7 @@ export default function App() {
                 <span className="text-[#d4af37]/70">VERIFIED</span>
               </div>
             </div>
-            
+
             {selectedNode.description && (
               <div className="relative px-6 py-4">
                 <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-gradient-to-b from-green-500/0 via-green-500/50 to-green-500/0" />
@@ -804,14 +816,14 @@ export default function App() {
       )}
 
       {showNarrative && (
-        <NarrativeSidebar 
-          data={graph as any} 
-          onClose={() => setShowNarrative(false)} 
+        <NarrativeSidebar
+          data={graph as any}
+          onClose={() => setShowNarrative(false)}
         />
       )}
 
       {showImportDeck && (
-        <ImportDeck 
+        <ImportDeck
           onImportComplete={(importedGraph) => {
             setGraph(prev => mergeGraphs(prev, importedGraph));
             setShowImportDeck(false);
@@ -829,7 +841,7 @@ export default function App() {
           </span>
         </div>
         {graph.nodes.length > 0 && (
-          <button 
+          <button
             onClick={() => setShowNarrative(true)}
             className="flex items-center gap-2 pl-4 border-l border-white/10 hover:text-[#d4af37]/80 transition-colors"
           >

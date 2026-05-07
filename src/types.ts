@@ -32,6 +32,7 @@ export interface SearchResult {
 
 export type LayoutTemplate = 'force' | 'isometric' | 'helix' | 'fractal' | 'constellation'
 export type MapDepth = 'flat' | 'relief' | 'deep'
+export type LabelDensity = 'minimal' | 'balanced' | 'dense'
 
 export type VisualSettings = {
   theme: 'default' | 'gold' | 'neon' | 'monochrome'
@@ -40,6 +41,9 @@ export type VisualSettings = {
   layoutTemplate: LayoutTemplate
   mapDepth: MapDepth
   autoSpatialExpand: boolean
+  nodeScale: number
+  labelDensity: LabelDensity
+  linkParticles: boolean
   showDataFlags: boolean
 }
 

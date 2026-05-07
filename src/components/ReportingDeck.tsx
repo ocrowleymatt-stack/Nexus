@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Download, ShieldAlert, FileText, Share2, Clipboard, Loader2, CheckCircle2, AlertCircle, Cpu, FlaskConical, Search, Check, Microscope, RotateCcw, ChevronRight } from 'lucide-react';
+import { Download, ShieldAlert, FileText, Share2, Clipboard, Loader2, CheckCircle2, AlertCircle, Cpu, FlaskConical, Microscope, RotateCcw, ChevronRight, Wand2, FileDown } from 'lucide-react';
 import { testHypothesis } from '../services/geminiService';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
+import { buildLocalReport, buildSystemSuggestions, computeGraphMetrics, ReportMode } from '../lib/graphAnalytics';
 
 interface ReportingDeckProps {
   graph: {
@@ -26,9 +27,12 @@ export default function ReportingDeck({ graph, projectName, onExpand, isExpandin
   const [hypothesis, setHypothesis] = useState('');
   const [isTestingHypothesis, setIsTestingHypothesis] = useState(false);
   const [hypothesisResult, setHypothesisResult] = useState<string | null>(null);
+  const [reportMode, setReportMode] = useState<ReportMode>('executive');
+  const [localReport, setLocalReport] = useState<string | null>(null);
 
   if (!graph || !graph.nodes) {
-    return (
+
+  return (
       <div className="p-10 text-center opacity-20">
         <p className="text-[10px] font-mono uppercase">Initializing Intel Engine...</p>
       </div>
@@ -36,6 +40,8 @@ export default function ReportingDeck({ graph, projectName, onExpand, isExpandin
   }
 
   const safeProjectName = projectName || 'Unnamed Investigation';
+  const metrics = computeGraphMetrics(graph);
+  const systemSuggestions = buildSystemSuggestions(graph);
 
   const exportToJson = () => {
     try {
@@ -115,6 +121,23 @@ ${(graph.links || []).map(l => `- ${l.source} → ${l.target} [${l.relationship 
     }
   };
 
+  const generateLocalReport = () => {
+    setLocalReport(buildLocalReport(graph, safeProjectName, reportMode));
+  };
+
+  const exportHtmlReport = () => {
+    const report = localReport || buildLocalReport(graph, safeProjectName, reportMode);
+    const escapedReport = report.replace(/[&<>]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[char] || char));
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${safeProjectName} Nexus Report</title><style>body{font-family:Inter,Arial,sans-serif;background:#050505;color:#f5f5f4;padding:40px;line-height:1.5}pre{white-space:pre-wrap;background:#111;padding:24px;border-radius:16px;border:1px solid #333}</style></head><body><pre>${escapedReport}</pre></body></html>`;
+    const dataStr = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+    const link = document.createElement('a');
+    link.setAttribute('href', dataStr);
+    link.setAttribute('download', `${safeProjectName.replace(/\s+/g, '_')}_${reportMode}_report.html`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-3">
@@ -155,6 +178,51 @@ ${(graph.links || []).map(l => `- ${l.source} → ${l.target} [${l.relationship 
         </button>
       </div>
 
+      <div className="grid grid-cols-4 gap-2">
+        <div className="rounded-2xl bg-white/5 border border-white/5 p-3">
+          <div className="text-xl font-black text-white">{metrics.nodeCount}</div>
+          <div className="text-[8px] font-mono uppercase text-white/40">Entities</div>
+        </div>
+        <div className="rounded-2xl bg-white/5 border border-white/5 p-3">
+          <div className="text-xl font-black text-white">{metrics.linkCount}</div>
+          <div className="text-[8px] font-mono uppercase text-white/40">Links</div>
+        </div>
+        <div className="rounded-2xl bg-white/5 border border-white/5 p-3">
+          <div className="text-xl font-black text-white">{metrics.isolatedCount}</div>
+          <div className="text-[8px] font-mono uppercase text-white/40">Isolates</div>
+        </div>
+        <div className="rounded-2xl bg-white/5 border border-white/5 p-3">
+          <div className="text-xl font-black text-white">{metrics.sourceBackedCount}</div>
+          <div className="text-[8px] font-mono uppercase text-white/40">Evidence</div>
+        </div>
+      </div>
+
+      <div className="p-5 rounded-3xl bg-white/[0.02] border border-white/5 space-y-4">
+        <div className="flex items-center gap-3">
+          <Wand2 className="text-[#d4af37]/70" size={18} />
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/60">Reporting Mode Builder</h3>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {(['executive', 'evidence', 'gaps', 'technical'] as ReportMode[]).map(mode => (
+            <button
+              key={mode}
+              onClick={() => setReportMode(mode)}
+              className={`rounded-xl border p-3 text-[9px] font-bold uppercase tracking-widest transition-all ${reportMode === mode ? 'border-[#d4af37]/40 bg-[#d4af37]/10 text-[#d4af37]' : 'border-white/5 bg-white/5 text-white/40 hover:text-white'}`}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={generateLocalReport} className="flex items-center justify-center gap-2 rounded-xl bg-[#d4af37] px-3 py-3 text-[9px] font-bold uppercase tracking-widest text-black hover:bg-[#eab308]">
+            <FileText size={13} /> Generate
+          </button>
+          <button onClick={exportHtmlReport} className="flex items-center justify-center gap-2 rounded-xl border border-white/5 bg-white/5 px-3 py-3 text-[9px] font-bold uppercase tracking-widest text-white/50 hover:text-[#d4af37]">
+            <FileDown size={13} /> HTML Report
+          </button>
+        </div>
+      </div>
+
       <div className="p-1 rounded-2xl bg-gradient-to-r from-blue-600/20 via-purple-600/20 to-green-600/20 relative overflow-hidden group">
         <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-green-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
         <button
@@ -182,7 +250,7 @@ ${(graph.links || []).map(l => `- ${l.source} → ${l.target} [${l.relationship 
           <span className="text-[10px] font-bold uppercase tracking-widest text-white/80">Auto-Expansion Engine</span>
           <div className="flex items-center gap-2">
              <span className="text-[8px] font-mono text-white/30 uppercase">Every 45s</span>
-             <div 
+             <div
                onClick={() => onToggleAutoGrow?.(!autoGrow)}
                className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${autoGrow ? 'bg-[#d4af37]' : 'bg-white/10'}`}
              >
@@ -226,6 +294,22 @@ ${(graph.links || []).map(l => `- ${l.source} → ${l.target} [${l.relationship 
       </div>
 
       <AnimatePresence>
+        {localReport && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="p-6 rounded-3xl bg-[#d4af37]/5 border border-[#d4af37]/20 space-y-4"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[#d4af37]">
+                <FileText size={14} />
+                {reportMode} Report
+              </div>
+              <button onClick={() => setLocalReport(null)} className="text-[9px] font-mono uppercase text-white/30 hover:text-white">Clear</button>
+            </div>
+            <pre className="max-h-[420px] overflow-y-auto custom-scrollbar whitespace-pre-wrap text-[11px] leading-relaxed text-white/70">{localReport}</pre>
+          </motion.div>
+        )}
         {hypothesisResult && (
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
@@ -237,7 +321,7 @@ ${(graph.links || []).map(l => `- ${l.source} → ${l.target} [${l.relationship 
                 <ShieldAlert size={14} />
                 Stress Test Result
               </div>
-              <button 
+              <button
                 onClick={() => setHypothesisResult(null)}
                 className="text-[9px] font-mono uppercase text-white/30 hover:text-white"
               >
@@ -260,6 +344,16 @@ ${(graph.links || []).map(l => `- ${l.source} → ${l.target} [${l.relationship 
           </motion.div>
         )}
       </AnimatePresence>
+
+      <div className="p-6 rounded-3xl bg-white/[0.02] border border-white/5 space-y-3">
+        <div className="flex items-center gap-3">
+          <ShieldAlert className="text-[#d4af37]/50" size={18} />
+          <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/50">System Suggestions</h3>
+        </div>
+        {systemSuggestions.map((suggestion, index) => (
+          <div key={index} className="rounded-xl border border-white/5 bg-black/20 p-3 text-[10px] font-mono uppercase leading-relaxed text-white/40">{suggestion}</div>
+        ))}
+      </div>
 
       <div className="p-6 rounded-3xl bg-gradient-to-br from-white/[0.03] to-transparent border border-white/5 space-y-4">
         <div className="flex items-center gap-3">
