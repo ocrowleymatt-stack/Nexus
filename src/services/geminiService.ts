@@ -45,6 +45,23 @@ async function tryServerJson(response: Response): Promise<any | null> {
   }
 }
 
+function isApiRouteMissingError(message: string | undefined): boolean {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("api route not found") ||
+    normalized.includes("req url not found on server") ||
+    normalized.includes("request url not found on server") ||
+    normalized.includes("route not found")
+  );
+}
+
+function serverJsonError(message: string): Error {
+  const error = new Error(message);
+  error.name = "ServerJsonError";
+  return error;
+}
+
 /**
  * POST to a server-side API route and return the parsed JSON.
  * Returns null if the server is unavailable or returns non-JSON (e.g. the
@@ -59,14 +76,22 @@ async function tryServer(path: string, body: object): Promise<any | null> {
     });
     const data = await tryServerJson(response);
     if (data === null) return null; // non-JSON response
-    if (!response.ok) {
-      // Server returned a JSON error — surface it so the caller can throw
-      throw new Error(data?.error || `Server error ${response.status}`);
+
+    const errorMessage = typeof data?.error === "string" ? data.error : undefined;
+    if (isApiRouteMissingError(errorMessage)) return null;
+
+    if (!response.ok || errorMessage) {
+      // Server returned a JSON error from a real API route — surface it so the
+      // UI does not silently retry with a client path that cannot fix backend
+      // configuration or provider failures.
+      throw serverJsonError(errorMessage || `Server error ${response.status}`);
     }
     return data;
   } catch (err: any) {
-    // Network error or non-JSON — signal "no server available"
-    if (err.message?.startsWith("Server error")) throw err;
+    // Network error or platform "route not found" responses mean the server
+    // API is unavailable in this environment, so try the browser Gemini path.
+    if (isApiRouteMissingError(err?.message)) return null;
+    if (err?.name === "ServerJsonError") throw err;
     return null;
   }
 }
