@@ -367,12 +367,25 @@ export default function ImportDeck({ onImportComplete, onClose }: ImportDeckProp
                         <p className="text-[10px] font-mono text-white/30 mt-0.5 uppercase">{(selectedItem.file.size / 1024).toFixed(1)} KB · {activeTab}</p>
                       </div>
                       {selectedItem.status === 'done' && selectedItem.graph && (
-                        <button
-                          onClick={() => onImportComplete(selectedItem.graph!)}
-                          className="px-5 py-2.5 bg-[#d4af37] text-black text-[10px] font-bold uppercase tracking-widest rounded-xl hover:scale-105 active:scale-95 transition-all shadow-xl"
-                        >
-                          Integrate into Workspace
-                        </button>
+                        <div className="flex flex-col gap-2">
+                          <button
+                            onClick={() => onImportComplete(selectedItem.graph!)}
+                            className="px-5 py-2.5 bg-[#d4af37] text-black text-[10px] font-bold uppercase tracking-widest rounded-xl hover:scale-105 active:scale-95 transition-all shadow-xl"
+                          >
+                            Integrate into Workspace
+                          </button>
+                          <button
+                            onClick={() => {
+                              const NEXUSPLEXUS_URL = 'https://nexusplexus-175978611575.us-central1.run.app';
+                              const payload = { fileName: selectedItem.file.name, ...selectedItem.graph };
+                              const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+                              window.open(`${NEXUSPLEXUS_URL}/#nexus=${encoded}`, '_blank');
+                            }}
+                            className="px-5 py-2.5 bg-white/10 border border-white/20 text-white text-[10px] font-bold uppercase tracking-widest rounded-xl hover:bg-white/20 active:scale-95 transition-all"
+                          >
+                            View in NexusPlexus
+                          </button>
+                        </div>
                       )}
                     </div>
 
