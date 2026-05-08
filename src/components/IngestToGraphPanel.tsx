@@ -123,6 +123,7 @@ export default function IngestToGraphPanel({ setGraph }: any) {
   const [queueProgress, setQueueProgress] = useState<{ done: number; total: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const processingRef = useRef(false)
+  const fileQueueRef = useRef<QueuedFile[]>([])
 
   // ---------------------------------------------------------------------------
   // Queue helpers
@@ -134,7 +135,11 @@ export default function IngestToGraphPanel({ setGraph }: any) {
       file: f,
       status: 'pending',
     }))
-    setFileQueue(prev => [...prev, ...newItems])
+    setFileQueue(prev => {
+      const next = [...prev, ...newItems]
+      fileQueueRef.current = next
+      return next
+    })
     setIngestType('file')
   }
 
@@ -148,11 +153,11 @@ export default function IngestToGraphPanel({ setGraph }: any) {
   }
 
   // ---------------------------------------------------------------------------
-  // Process the full queue sequentially
+  // Process the full queue sequentially — always reads from ref to avoid stale closure
   // ---------------------------------------------------------------------------
-  const processQueue = async (queueSnapshot: QueuedFile[]) => {
+  const processQueue = async () => {
     if (processingRef.current) return
-    const pending = queueSnapshot.filter(q => q.status === 'pending')
+    const pending = fileQueueRef.current.filter(q => q.status === 'pending')
     if (pending.length === 0) return
     processingRef.current = true
     setIsProcessingQueue(true)
@@ -160,13 +165,25 @@ export default function IngestToGraphPanel({ setGraph }: any) {
 
     for (let i = 0; i < pending.length; i++) {
       const item = pending[i]
-      setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'processing' } : q))
+      setFileQueue(prev => {
+        const next = prev.map(q => q.id === item.id ? { ...q, status: 'processing' as QueueStatus } : q)
+        fileQueueRef.current = next
+        return next
+      })
       try {
         const result = await uploadFileForIntelligence(item.file)
         setGraph((prev: any) => mergeGraphs(prev, result))
-        setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'done' } : q))
+        setFileQueue(prev => {
+          const next = prev.map(q => q.id === item.id ? { ...q, status: 'done' as QueueStatus } : q)
+          fileQueueRef.current = next
+          return next
+        })
       } catch (err: any) {
-        setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'error', error: err.message || 'Failed' } : q))
+        setFileQueue(prev => {
+          const next = prev.map(q => q.id === item.id ? { ...q, status: 'error' as QueueStatus, error: err.message || 'Failed' } : q)
+          fileQueueRef.current = next
+          return next
+        })
       }
       setQueueProgress(prev => prev ? { ...prev, done: i + 1 } : { done: i + 1, total: pending.length })
     }
@@ -179,9 +196,9 @@ export default function IngestToGraphPanel({ setGraph }: any) {
 
   // Auto-run: fire whenever new pending files arrive and queue is idle
   useEffect(() => {
-    const hasPending = fileQueue.some(q => q.status === 'pending')
+    const hasPending = fileQueueRef.current.some(q => q.status === 'pending')
     if (hasPending && !processingRef.current) {
-      processQueue(fileQueue)
+      processQueue()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileQueue.length])
@@ -191,7 +208,7 @@ export default function IngestToGraphPanel({ setGraph }: any) {
   // ---------------------------------------------------------------------------
   const handleIngest = async () => {
     if (ingestType === 'file') {
-      await processQueue(fileQueue)
+      await processQueue()
       return
     }
     if (!inputValue.trim()) return
