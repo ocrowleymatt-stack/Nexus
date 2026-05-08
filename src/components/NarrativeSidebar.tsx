@@ -18,6 +18,7 @@ interface NarrativeSidebarProps {
 export const NarrativeSidebar: React.FC<NarrativeSidebarProps> = ({ data, onClose }) => {
   const [forensicReports, setForensicReports] = useState<Record<string, string>>({});
   const [loadingNodes, setLoadingNodes] = useState<Record<string, boolean>>({});
+  const [seedImage] = useState(() => localStorage.getItem('nexus_forensic_seed'));
 
   const handleForensicSearch = async (nodeId: string, nodeName: string) => {
     setLoadingNodes(prev => ({ ...prev, [nodeId]: true }));
@@ -41,9 +42,9 @@ export const NarrativeSidebar: React.FC<NarrativeSidebarProps> = ({ data, onClos
     >
       <div className="p-6 pt-20 border-b border-white/5 flex justify-between items-start bg-[#111]">
         <div className="flex gap-4">
-          <div className="w-12 h-12 rounded-xl bg-[#d4af37]/10 flex items-center justify-center border border-[#d4af37]/20 shrink-0">
+          <div className="w-12 h-12 rounded-xl bg-[#d4af37]/10 flex items-center justify-center border border-[#d4af37]/20 shrink-0 overflow-hidden">
              <img 
-                src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200&h=200" 
+                src={seedImage || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200&h=200"} 
                 className="w-full h-full object-cover rounded-xl grayscale brightness-110 contrast-125"
                 alt="Agent"
                 referrerPolicy="no-referrer"
@@ -52,7 +53,7 @@ export const NarrativeSidebar: React.FC<NarrativeSidebarProps> = ({ data, onClos
           <div>
             <div className="flex flex-col -mb-1">
               <span className="text-[8px] font-mono tracking-[0.4em] text-[#d4af37]/60 uppercase">O'CROWLEY // NEXUS</span>
-              <h2 className="text-xl font-serif italic font-black text-white">{data.centralNode}</h2>
+              <h2 className="text-xl font-display font-black text-white">{data.centralNode}</h2>
             </div>
             <div className="flex items-center gap-2 mt-1">
               <span className="w-1.5 h-1.5 rounded-full bg-[#d4af37] animate-pulse" />
@@ -74,7 +75,7 @@ export const NarrativeSidebar: React.FC<NarrativeSidebarProps> = ({ data, onClos
             <Info size={14} className="text-[#d4af37]" />
             <h4 className="text-xs font-mono uppercase tracking-widest text-[#d4af37]">Lattice Narrative</h4>
           </div>
-          <div className="prose prose-invert prose-sm max-w-none prose-p:leading-relaxed prose-headings:font-serif prose-headings:italic prose-headings:text-base prose-headings:text-white/80">
+          <div className="prose prose-invert prose-sm max-w-none prose-p:leading-relaxed prose-headings:font-display prose-headings:font-black prose-headings:text-base prose-headings:text-white/80">
              <ReactMarkdown>{data.narrative}</ReactMarkdown>
           </div>
         </section>
@@ -88,7 +89,7 @@ export const NarrativeSidebar: React.FC<NarrativeSidebarProps> = ({ data, onClos
             {data.nodes.map(node => (
               <div key={node.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-xl hover:border-[#d4af37]/30 transition-all group">
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-xs font-serif italic text-white group-hover:text-[#d4af37] transition-colors">{node.name || node.id}</span>
+                  <span className="text-xs font-display font-black text-white group-hover:text-[#d4af37] transition-colors">{node.name || node.id}</span>
                   <span className={ `text-[9px] px-1.5 py-0.5 rounded uppercase font-mono ${
                     node.type === 'person' ? 'bg-blue-500/20 text-blue-400' :
                     node.type === 'organization' ? 'bg-red-500/20 text-red-400' :

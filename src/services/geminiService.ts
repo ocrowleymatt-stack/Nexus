@@ -1,167 +1,162 @@
-/**
- * geminiService.ts
- *
- * Unified intelligence extraction service.
- *
- * Strategy:
- *  1. Try the server-side /api/ai/* route (works when the Express server is
- *     running, e.g. local dev or a full Cloud Run deployment).
- *  2. If the server returns a non-JSON response (HTML SPA fallback, 404, etc.)
- *     OR if the fetch itself fails, fall back to calling the Gemini API
- *     directly from the browser via geminiClientService.
- *     On Google AI Studio the service worker transparently proxies those calls.
- *
- * This dual-path approach means the app works in both environments without
- * any configuration changes.
- */
-
 import { SearchResult } from "../types";
-import {
-  clientDeepSearchEntity,
-  clientExtractIntelligenceFromCsv,
-  clientExtractIntelligenceFromText,
-  clientExtractIntelligenceFromUrl,
-  clientHuntZipIntelligence,
-  clientExpandGraph,
-  clientForensicSearchNode,
-  clientTestHypothesis,
-} from "./geminiClientService";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Safely parse a fetch Response as JSON.
- * Returns null (instead of throwing) when the body is not valid JSON so the
- * caller can decide to fall back to the client-side path.
- */
-async function tryServerJson(response: Response): Promise<any | null> {
-  const text = await response.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-function isApiRouteMissingError(message: string | undefined): boolean {
-  if (!message) return false;
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("api route not found") ||
-    normalized.includes("req url not found on server") ||
-    normalized.includes("request url not found on server") ||
-    normalized.includes("route not found")
-  );
-}
-
-function serverJsonError(message: string): Error {
-  const error = new Error(message);
-  error.name = "ServerJsonError";
-  return error;
-}
-
-/**
- * POST to a server-side API route and return the parsed JSON.
- * Returns null if the server is unavailable or returns non-JSON (e.g. the
- * SPA HTML fallback that Google AI Studio serves for unknown routes).
- */
-async function tryServer(path: string, body: object): Promise<any | null> {
-  try {
-    const response = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await tryServerJson(response);
-    if (data === null) return null; // non-JSON response
-
-    const errorMessage = typeof data?.error === "string" ? data.error : undefined;
-    if (isApiRouteMissingError(errorMessage)) return null;
-
-    if (!response.ok || errorMessage) {
-      // Server returned a JSON error from a real API route — surface it so the
-      // UI does not silently retry with a client path that cannot fix backend
-      // configuration or provider failures.
-      throw serverJsonError(errorMessage || `Server error ${response.status}`);
-    }
-    return data;
-  } catch (err: any) {
-    // Network error or platform "route not found" responses mean the server
-    // API is unavailable in this environment, so try the browser Gemini path.
-    if (isApiRouteMissingError(err?.message)) return null;
-    if (err?.name === "ServerJsonError") throw err;
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
 
 export async function deepSearchEntity(entityName: string): Promise<SearchResult> {
-  const data = await tryServer("/api/ai/deep-search", { entityName });
-  if (data !== null) return data;
-  return clientDeepSearchEntity(entityName);
+  const response = await fetch('/api/ai/deep-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entityName })
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Deep search failed");
+  }
+
+  return response.json();
 }
 
 export async function extractIntelligenceFromCsv(csvContent: string): Promise<SearchResult> {
-  const data = await tryServer("/api/ai/extract-csv", { csvContent });
-  if (data !== null) return data;
-  return clientExtractIntelligenceFromCsv(csvContent);
+  const response = await fetch('/api/ai/extract-csv', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csvContent })
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "CSV extraction failed");
+  }
+
+  return response.json();
 }
 
 export async function forensicSearchNode(entityName: string): Promise<string> {
-  const data = await tryServer("/api/ai/forensic-search", { entityName });
-  if (data !== null) return data.text;
-  return clientForensicSearchNode(entityName);
+  const response = await fetch('/api/ai/forensic-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entityName })
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Forensic search failed");
+  }
+
+  const data = await response.json();
+  return data.text;
 }
 
-export async function testHypothesis(
-  hypothesis: string,
-  contextNodes: string[]
-): Promise<string> {
-  const data = await tryServer("/api/ai/test-hypothesis", { hypothesis, contextNodes });
-  if (data !== null) return data.text;
-  return clientTestHypothesis(hypothesis, contextNodes);
+export async function testHypothesis(hypothesis: string, contextNodes: string[]): Promise<string> {
+  const response = await fetch('/api/ai/test-hypothesis', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hypothesis, contextNodes })
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Hypothesis testing failed");
+  }
+
+  const data = await response.json();
+  return data.text;
 }
 
 export async function expandGraph(existingData: SearchResult): Promise<SearchResult> {
-  const data = await tryServer("/api/ai/expand-graph", { existingData });
-  if (data !== null) return data;
-  return clientExpandGraph(existingData);
+  const response = await fetch('/api/ai/expand-graph', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ existingData })
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Graph expansion failed");
+  }
+
+  return response.json();
 }
 
 export async function extractIntelligenceFromText(text: string): Promise<SearchResult> {
-  const data = await tryServer("/api/ai/extract-text", { text });
-  if (data !== null) return data;
-  return clientExtractIntelligenceFromText(text);
+  const response = await fetch('/api/ai/extract-text', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text })
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Text extraction failed");
+  }
+
+  return response.json();
 }
 
 export async function extractIntelligenceFromUrl(url: string): Promise<SearchResult> {
-  const data = await tryServer("/api/ai/extract-url", { url });
-  if (data !== null) return data;
-  return clientExtractIntelligenceFromUrl(url);
+  const response = await fetch('/api/ai/extract-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url })
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "URL extraction failed");
+  }
+
+  return response.json();
 }
 
 export async function huntZipIntelligence(
-  zipName: string,
-  fileTree: string[],
+  zipName: string, 
+  fileTree: string[], 
   fileSamples: { [path: string]: string }
 ): Promise<SearchResult> {
-  const data = await tryServer("/api/ai/hunt-zip", { zipName, fileTree, fileSamples });
-  if (data !== null) return data;
-  return clientHuntZipIntelligence(zipName, fileTree, fileSamples);
+  // ZIP analysis stays client-side because of complexity of passing everything 
+  // but let's try to pass it to the server if possible or implement it better.
+  // Actually, let's keep it on the server too for consistency.
+  
+  const response = await fetch('/api/ai/hunt-zip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ zipName, fileTree, fileSamples })
+  });
+  
+  if (response.ok) {
+    return response.json();
+  }
+  
+  const err = await response.json();
+  throw new Error(err.error || "ZIP analysis failed");
 }
 
 export async function veniceSensemaking(existingData: SearchResult): Promise<SearchResult> {
-  // Venice sensemaking has no client-side equivalent — try server only
-  const data = await tryServer("/api/ai/venice-clean", { existingData });
-  if (data !== null) return data;
-  // Graceful degradation: return the existing data unchanged
-  throw new Error(
-    "Venice Sensemaking requires the server-side Venice API key. " +
-    "Please ensure VENICE_API_KEY is configured in your deployment."
-  );
+  const response = await fetch('/api/ai/venice-clean', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ existingData })
+  });
+
+  if (response.ok) {
+    return response.json();
+  }
+
+  const err = await response.json();
+  throw new Error(err.error || "Venice sensemaking failed");
+}
+
+export async function reconstructVisual(entityName: string, description: string, seedImage?: string): Promise<string> {
+  const response = await fetch('/api/ai/reconstruct-visual', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entityName, description, seedImage })
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Visual reconstruction failed");
+  }
+
+  const data = await response.json();
+  return data.image; // base64
 }

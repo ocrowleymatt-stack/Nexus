@@ -8,10 +8,21 @@ import {
   expandGraph, 
   extractIntelligenceFromText,
   extractIntelligenceFromUrl,
-  huntZipIntelligence 
+  huntZipIntelligence,
+  reconstructVisual
 } from '../utils/ai.js'
 
 const router = express.Router()
+
+router.post('/reconstruct-visual', async (req, res) => {
+  const { entityName, description, seedImage } = req.body
+  try {
+    const base64 = await reconstructVisual(entityName, description, seedImage)
+    res.json({ image: base64 })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 router.post('/extract-url', async (req, res) => {
   const { url } = req.body

@@ -3,12 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Loader2, Cpu, Globe, Database, FileUp, UploadCloud, Archive, Box, CheckCircle, ShieldCheck, Shield, X, File, Check, AlertCircle } from 'lucide-react';
+import { Search, Loader2, Cpu, Globe, Database, FileUp, UploadCloud, Archive, Box, CheckCircle, ShieldCheck, Shield, X } from 'lucide-react';
 import Papa from 'papaparse';
 import { analyzeZipFile, getZipFileContent } from '../services/zipService';
-import { loginWithGoogleForDrive } from '../lib/firebase';
 
 interface SearchOverlayProps {
   onSearch: (query: string) => void;
@@ -20,18 +19,6 @@ interface SearchOverlayProps {
   error: string | null;
   driveToken: string | null;
   onDriveAuth: (token: string) => void;
-}
-
-// ---------------------------------------------------------------------------
-// Multi-file queue types
-// ---------------------------------------------------------------------------
-type QueueStatus = 'pending' | 'processing' | 'done' | 'error';
-interface QueuedFile { id: string; file: File; status: QueueStatus; error?: string; }
-
-function formatBytes(b: number) {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
 export const SearchOverlay: React.FC<SearchOverlayProps> = ({ 
@@ -49,12 +36,6 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   const [mode, setMode] = useState<'search' | 'file' | 'drive'>('search');
   const [isDragging, setIsDragging] = useState(false);
 
-  // Multi-file queue
-  const [fileQueue, setFileQueue] = useState<QueuedFile[]>([]);
-  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
-  const [queueProgress, setQueueProgress] = useState<{ done: number; total: number } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim() && !isSearching) {
@@ -62,53 +43,38 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
     }
   };
 
-  // Google Drive auth via Firebase — reuses the existing Firebase OAuth client,
-  // no separate VITE_GOOGLE_CLIENT_ID required.
-  const handleAuthorize = async () => {
-    try {
-      const token = await loginWithGoogleForDrive();
-      onDriveAuth(token);
-      setMode('search');
-    } catch (err: any) {
-      console.error('Drive auth failed:', err);
-      alert(`Google Drive sign-in failed: ${err?.message ?? 'Unknown error'}`);
+  // Simple Google OAuth Popup
+  const handleAuthorize = () => {
+    const clientId = (import.meta as any).env.VITE_GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      alert("Google Client ID not configured in environment.");
+      return;
     }
-  };
 
-  // ---------------------------------------------------------------------------
-  // Queue helpers
-  // ---------------------------------------------------------------------------
-  const addFilesToQueue = (files: FileList | File[]) => {
-    const arr = Array.from(files);
-    const newItems: QueuedFile[] = arr.map(f => ({
-      id: `${f.name}-${f.size}-${Date.now()}-${Math.random()}`,
-      file: f,
-      status: 'pending',
-    }));
-    setFileQueue(prev => [...prev, ...newItems]);
-  };
-
-  const removeFromQueue = (id: string) => setFileQueue(prev => prev.filter(q => q.id !== id));
-  const clearQueue = () => { setFileQueue([]); if (fileInputRef.current) fileInputRef.current.value = ''; };
-
-  const processQueue = async () => {
-    const pending = fileQueue.filter(q => q.status === 'pending');
-    if (pending.length === 0) return;
-    setIsProcessingQueue(true);
-    setQueueProgress({ done: 0, total: pending.length });
-    for (let i = 0; i < pending.length; i++) {
-      const item = pending[i];
-      setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'processing' } : q));
+    const scope = "https://www.googleapis.com/auth/drive.readonly";
+    const redirectUri = window.location.origin;
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${scope}`;
+    
+    const popup = window.open(authUrl, "_blank", "width=600,height=600");
+    
+    // Listen for the token in the fragment
+    const interval = setInterval(() => {
       try {
-        await handleFile(item.file);
-        setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'done' } : q));
-      } catch (err: any) {
-        setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'error', error: err.message || 'Failed' } : q));
+        if (popup?.location.hash) {
+          const params = new URLSearchParams(popup.location.hash.substring(1));
+          const token = params.get("access_token");
+          if (token) {
+            onDriveAuth(token);
+            clearInterval(interval);
+            popup.close();
+            setMode('search');
+          }
+        }
+      } catch (e) {
+        // Cross-origin might throw until the popup redirects back to redirectUri
       }
-      setQueueProgress({ done: i + 1, total: pending.length });
-    }
-    setIsProcessingQueue(false);
-    setQueueProgress(null);
+      if (popup?.closed) clearInterval(interval);
+    }, 500);
   };
 
   const handleFile = useCallback(async (file: File) => {
@@ -151,14 +117,10 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      addFilesToQueue(e.dataTransfer.files);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFile(e.dataTransfer.files[0]);
     }
   };
-
-  const pendingCount = fileQueue.filter(q => q.status === 'pending').length;
-  const doneCount = fileQueue.filter(q => q.status === 'done').length;
-  const errorCount = fileQueue.filter(q => q.status === 'error').length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
@@ -176,7 +138,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
               <div>
                 <div className="flex flex-col -mb-1">
                   <span className="text-[8px] font-mono tracking-[0.4em] text-[#d4af37]/40 uppercase">O'CROWLEY</span>
-                  <h1 className="text-2xl font-serif italic font-black text-white tracking-tighter">Nexus</h1>
+                  <h1 className="text-2xl font-display font-black text-white tracking-tighter">Nexus</h1>
                 </div>
                 <p className="text-[9px] font-mono text-white/20 uppercase tracking-[0.2em] mt-0.5">Secure Grounded Protocol // v1.2.0-ADR</p>
               </div>
@@ -201,6 +163,12 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                     className={`px-4 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'drive' ? 'bg-[#d4af37] text-black font-bold' : 'text-white/40 hover:text-white'}`}
                   >
                     Vault
+                  </button>
+                  <button 
+                    onClick={() => setMode('nexus-remote' as any)}
+                    className={`px-4 py-1.5 rounded-md text-[10px] font-mono uppercase transition-all whitespace-nowrap ${mode === 'nexus-remote' as any ? 'bg-[#d4af37] text-black font-bold' : 'text-[#d4af37]/40 hover:text-[#d4af37]'}`}
+                  >
+                    Pulse
                   </button>
               </div>
 
@@ -241,7 +209,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder="Enter target node (Person, Org, Alias...)"
-                    className="w-full bg-white/[0.02] border border-white/5 rounded-xl px-6 py-6 text-xl text-white placeholder:text-white/10 focus:outline-none focus:border-[#d4af37]/40 transition-all font-serif italic pr-16"
+                    className="w-full bg-white/[0.02] border border-white/5 rounded-xl px-6 py-6 text-xl text-white placeholder:text-white/10 focus:outline-none focus:border-[#d4af37]/40 transition-all font-display font-black pr-16"
                     disabled={isSearching}
                   />
                   <button 
@@ -253,17 +221,22 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                   </button>
                 </form>
 
-                <div className="mt-8 flex flex-wrap gap-4">
-                  <span className="text-[10px] font-mono text-white/20 uppercase tracking-wider">Example Nodes:</span>
-                  {['Satya Nadella', 'NVIDIA Research', 'Lunar Gateway', 'OpenSource Security'].map((ex) => (
-                    <button 
-                      key={ex}
-                      onClick={() => setQuery(ex)}
-                      className="text-[10px] font-mono text-white/40 hover:text-[#d4af37] transition-colors uppercase"
-                    >
-                      [{ex}]
-                    </button>
-                  ))}
+                <div className="mt-8 flex flex-col gap-4">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <span className="text-[10px] font-mono text-white/20 uppercase tracking-wider mr-2">Example Targets:</span>
+                    {['Satya Nadella', 'Lazarus Group', 'Operation Cookie Monster', 'Silicon Valley Bank Failure'].map((ex) => (
+                      <button 
+                        key={ex}
+                        onClick={() => setQuery(ex)}
+                        className="px-3 py-1 bg-white/5 hover:bg-[#d4af37]/20 border border-white/5 hover:border-[#d4af37]/30 rounded-full text-[9px] font-mono text-white/40 hover:text-[#d4af37] transition-all uppercase"
+                      >
+                        {ex}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] font-mono text-white/10 italic">
+                    Tip: Use broad entity names. Nexus will use Gemini 2.5 with Google Search grounding to map real-time relationships.
+                  </p>
                 </div>
               </motion.div>
             ) : mode === 'file' ? (
@@ -272,119 +245,119 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                className="space-y-4"
               >
-                {/* Drop zone */}
                 <div 
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                   onDragLeave={() => setIsDragging(false)}
                   onDrop={onDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center transition-all cursor-pointer ${
-                    isDragging ? 'border-[#d4af37] bg-[#d4af37]/10 p-10' :
-                    fileQueue.length > 0 ? 'border-[#d4af37]/20 bg-white/5 p-4' :
-                    'border-white/10 bg-white/5 hover:border-white/20 p-12'
-                  }`}
+                  className={`border-2 border-dashed rounded-2xl p-12 flex flex-col items-center justify-center transition-all ${isDragging ? 'border-[#d4af37] bg-[#d4af37]/10' : 'border-white/10 bg-white/5 hover:border-white/20'}`}
                 >
-                  {fileQueue.length === 0 ? (
-                    <>
-                      <div className={`p-4 rounded-full mb-4 transition-all ${isDragging ? 'bg-[#d4af37] text-black' : 'bg-white/5 text-white/20'}`}>
-                        <UploadCloud size={32} />
-                      </div>
-                      <h3 className="text-sm font-bold text-white mb-1">Intelligence Data Ingestion</h3>
-                      <p className="text-xs text-white/40 mb-4 font-mono uppercase tracking-tight">Drop files or click to select — multiple files supported</p>
-                    </>
-                  ) : (
-                    <div className="flex items-center gap-2 text-[10px] font-mono text-[#d4af37]/50 uppercase tracking-widest">
-                      <UploadCloud size={14} />
-                      <span>Drop more files to add to queue</span>
-                    </div>
-                  )}
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    className="hidden"
-                    multiple
-                    onChange={(e) => e.target.files && e.target.files.length > 0 && addFilesToQueue(e.target.files)}
-                  />
-                </div>
-
-                {/* Queue list */}
-                {fileQueue.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-mono uppercase tracking-widest text-white/30">
-                        Queue — {fileQueue.length} file{fileQueue.length !== 1 ? 's' : ''}
-                        {doneCount > 0 && ` · ${doneCount} done`}
-                        {errorCount > 0 && ` · ${errorCount} failed`}
-                      </span>
-                      <button onClick={clearQueue} className="text-[9px] font-mono text-white/20 hover:text-red-400 uppercase tracking-widest transition-colors">Clear all</button>
-                    </div>
-                    <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
-                      {fileQueue.map(item => (
-                        <div key={item.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all ${
-                          item.status === 'done' ? 'bg-green-500/5 border-green-500/20' :
-                          item.status === 'error' ? 'bg-red-500/5 border-red-500/20' :
-                          item.status === 'processing' ? 'bg-[#d4af37]/10 border-[#d4af37]/30 animate-pulse' :
-                          'bg-white/[0.03] border-white/5'
-                        }`}>
-                          <div className="shrink-0">
-                            {item.status === 'done' && <Check size={12} className="text-green-400" />}
-                            {item.status === 'error' && <AlertCircle size={12} className="text-red-400" />}
-                            {item.status === 'processing' && <Loader2 size={12} className="text-[#d4af37] animate-spin" />}
-                            {item.status === 'pending' && <File size={12} className="text-white/30" />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[10px] font-mono text-white/70 truncate">{item.file.name}</p>
-                            {item.status === 'error' && <p className="text-[9px] font-mono text-red-400 truncate">{item.error}</p>}
-                            {item.status === 'pending' && <p className="text-[9px] font-mono text-white/20">{formatBytes(item.file.size)}</p>}
-                          </div>
-                          <div className="shrink-0">
-                            {item.status === 'done' && <span className="text-[8px] font-mono uppercase text-green-400 tracking-widest">Done</span>}
-                            {item.status === 'processing' && <span className="text-[8px] font-mono uppercase text-[#d4af37] tracking-widest">Analyzing…</span>}
-                            {item.status === 'pending' && (
-                              <button onClick={() => removeFromQueue(item.id)} className="p-1 hover:bg-white/10 rounded-full text-white/20 hover:text-white/60 transition-colors">
-                                <X size={10} />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {isProcessingQueue && queueProgress && (
-                      <div className="space-y-1">
-                        <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                          <div className="h-full bg-[#d4af37] transition-all duration-500" style={{ width: `${(queueProgress.done / queueProgress.total) * 100}%` }} />
-                        </div>
-                        <p className="text-[9px] font-mono text-white/30 text-center">Processing {queueProgress.done} / {queueProgress.total}</p>
-                      </div>
-                    )}
-                    {/* Process queue button */}
-                    {pendingCount > 0 && !isProcessingQueue && (
-                      <button
-                        onClick={processQueue}
-                        disabled={isSearching}
-                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#d4af37] text-black py-3 text-xs font-bold uppercase tracking-widest hover:bg-[#eab308] transition-all disabled:opacity-50"
-                      >
-                        <UploadCloud size={14} />
-                        Inject {pendingCount} File{pendingCount !== 1 ? 's' : ''} to Engine
-                      </button>
-                    )}
+                  <div className={`p-4 rounded-full mb-4 transition-all ${isDragging ? 'bg-[#d4af37] text-black' : 'bg-white/5 text-white/20'}`}>
+                    <UploadCloud size={32} />
                   </div>
-                )}
+                  <h3 className="text-sm font-bold text-white mb-1">
+                    Intelligence Data Ingestion
+                  </h3>
+                  <p className="text-xs text-white/40 mb-6 font-mono uppercase tracking-tight">
+                    Drop any file to begin deep analysis
+                  </p>
+                  
+                  <label className="cursor-pointer px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-mono uppercase tracking-widest transition-all">
+                    Selective Upload
+                    <input 
+                      type="file" 
+                      className="hidden" 
+                      onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+                    />
+                  </label>
+                </div>
                 
-                <div className="flex items-center gap-2 text-[10px] font-mono text-white/30">
-                  <FileUp size={12} />
-                  <span>Gemini Smart Extraction: Maps nodes &amp; relationships automatically from unstructured data types.</span>
+                <div className="mt-8 space-y-2">
+                  <div className="flex items-center gap-2 text-[10px] font-mono text-white/30 truncate">
+                    <FileUp size={12} />
+                    <span>
+                      Gemini Smart Extraction: Maps nodes & relationships automatically from unstructured data types.
+                    </span>
+                  </div>
                 </div>
               </motion.div>
-            ) : (
-              <motion.div 
-                key="box-mode"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="p-12 border border-white/5 rounded-2xl bg-white/5 text-center"
-              >
+             ) : mode === ('nexus-remote' as any) ? (
+                <motion.div 
+                  key="remote-mode"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="p-12 border border-[#d4af37]/20 rounded-2xl bg-[#d4af37]/5 text-left"
+                >
+                  <div className="flex items-start gap-8">
+                    <div className="flex-1 space-y-6">
+                      <div className="flex items-center gap-4">
+                        <div className="p-4 rounded-full bg-[#d4af37]/10 text-[#d4af37]">
+                          <Globe size={32} />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-white font-display uppercase tracking-widest">
+                            Nexus Control Protocol
+                          </h3>
+                          <p className="text-[10px] font-mono text-[#d4af37]/60 uppercase">Remote handshake: Active</p>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-4">
+                        <p className="text-[10px] text-white/40 font-mono uppercase leading-relaxed max-w-md">
+                          Use these specifications to link your Control Centre at <span className="text-[#d4af37]">nexus.ocrowley.com</span>. 
+                          This app functions as a high-fidelity intelligence visualizer and processing unit.
+                        </p>
+                        
+                        <div className="grid grid-cols-1 gap-3">
+                          <div className="p-3 bg-black/40 border border-white/5 rounded-xl">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-[9px] font-bold text-white/60 uppercase">API Endpoint (Deep Search)</span>
+                              <span className="px-2 py-0.5 bg-green-500/10 text-green-500 text-[7px] font-bold rounded">CORS_OK</span>
+                            </div>
+                            <code className="text-[10px] font-mono text-[#d4af37] block break-all">
+                              {window.location.origin}/api/ai/deep-search
+                            </code>
+                            <p className="text-[8px] text-white/20 mt-1 font-mono uppercase tracking-tighter">Method: POST // Body: {"{ \"entityName\": \"...\" }"}</p>
+                          </div>
+                          
+                          <div className="p-3 bg-black/40 border border-white/5 rounded-xl">
+                             <div className="flex justify-between items-center mb-1">
+                              <span className="text-[9px] font-bold text-white/60 uppercase">Browser Hook (PostMessage)</span>
+                            </div>
+                            <code className="text-[9px] font-mono text-blue-400 block break-all">
+                              visualizer.postMessage({'{ command: "INGEST_ENTITY", payload: { query: "Target" } }'}, "*")
+                            </code>
+                            <p className="text-[8px] text-white/20 mt-1 font-mono uppercase tracking-tighter">Commands: INGEST_ENTITY, EXPAND_GRAPH, SET_MINIMAL, SENSEMAKING</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="w-64 space-y-4">
+                      <div className="p-6 bg-black/60 border border-[#d4af37]/10 rounded-2xl">
+                        <h4 className="text-[10px] font-bold text-[#d4af37] uppercase mb-4 tracking-widest">Visualizer URL</h4>
+                        <div className="flex flex-col gap-3">
+                          <div className="bg-white/5 border border-white/10 rounded-lg px-3 py-4 text-[9px] font-mono text-white/60 break-all select-all">
+                            {window.location.href}
+                          </div>
+                          <p className="text-[8px] font-mono text-white/20 uppercase text-center mt-2 italic">
+                            Embed this in your Control Centre graph tab for zero-clutter visual sync.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-[9px] font-mono text-white/10 text-center uppercase tracking-tighter">
+                        Nexus Core Pulse // Ready for integration
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              ) : (
+                <motion.div 
+                  key="box-mode"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="p-12 border border-white/5 rounded-2xl bg-white/5 text-center"
+                >
                 <div className={`p-4 rounded-full w-fit mx-auto mb-4 ${driveToken ? 'bg-[#d4af37]/10 text-[#d4af37]' : 'bg-blue-500/10 text-blue-500'}`}>
                   {driveToken ? <ShieldCheck size={32} /> : <Box size={32} />}
                 </div>
@@ -455,7 +428,10 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
         </div>
         
         <div className="bg-white/5 px-8 py-3 flex justify-between items-center text-[9px] font-mono text-white/20 uppercase tracking-widest">
-           <span>{mode === 'search' ? 'Secure Grounded Protocol' : 'Intelligence Processing Unit'}</span>
+           <div className="flex gap-4">
+             <span>{mode === 'search' ? 'Secure Grounded Protocol' : 'Intelligence Processing Unit'}</span>
+             <span className="text-[#d4af37]/40 hover:text-[#d4af37] cursor-help" title="Endpoints: /api/ai/deep-search, /ingest, /api/github">API ACCESS: ENABLED</span>
+           </div>
            <span>EST: {new Date().toLocaleTimeString()}</span>
         </div>
       </motion.div>

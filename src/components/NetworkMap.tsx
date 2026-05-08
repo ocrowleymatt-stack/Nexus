@@ -9,7 +9,8 @@ import { forceCollide } from 'd3-force';
 import { SearchResult, VisualSettings } from '../types';
 import { Maximize, Search, Target, Minimize, Shield, FileText, Globe } from 'lucide-react';
 
-import { ErrorBoundary } from './ErrorBoundary';
+// Relative import to local component
+import { IntelErrorBoundary as ErrorBoundary } from './IntelErrorBoundary';
 
 interface NetworkMapProps {
   data: SearchResult;

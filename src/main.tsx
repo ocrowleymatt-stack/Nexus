@@ -1,11 +1,14 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
-import App from './App.tsx';
+import App from './App';
 import './index.css';
-import { ErrorBoundary } from './components/ErrorBoundary';
+import { IntelErrorBoundary } from './components/IntelErrorBoundary';
 
+// Nexus Intel System Boot - v1.2.1
 createRoot(document.getElementById('root')!).render(
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>,
+  <IntelErrorBoundary>
+    <StrictMode>
+      <App />
+    </StrictMode>
+  </IntelErrorBoundary>,
 );

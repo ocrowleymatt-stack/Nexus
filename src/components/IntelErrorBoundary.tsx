@@ -10,7 +10,7 @@ interface State {
   errorStr: string;
 }
 
-export class ErrorBoundary extends Component<Props, State> {
+export class IntelErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
     errorStr: ""

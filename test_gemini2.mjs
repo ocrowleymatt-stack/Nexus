@@ -6,7 +6,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 async function test() {
   try {
     const res = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.5-pro-preview',
       contents: 'Who won wimbledon 2024? Respond in JSON.',
       config: {
         responseMimeType: "application/json",
