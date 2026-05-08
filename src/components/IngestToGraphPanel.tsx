@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { mergeGraphs } from '../lib/intelligenceGraph'
 import { extractIntelligenceFromText, extractIntelligenceFromUrl } from '../services/geminiService'
 import { FileText, Link as LinkIcon, Upload, Search, Check, Loader2, File, X, ChevronRight, AlertCircle } from 'lucide-react'
@@ -17,26 +17,91 @@ interface QueuedFile {
 }
 
 // ---------------------------------------------------------------------------
-// Upload any file to the server-side universal parser
+// Client-side universal file parser (no server required)
 // ---------------------------------------------------------------------------
-async function uploadFileForIntelligence(file: File): Promise<any> {
-  const formData = new FormData()
-  formData.append('file', file)
-  const response = await fetch('/api/upload', {
-    method: 'POST',
-    body: formData,
+async function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsText(file)
   })
-  const text = await response.text()
-  let data: any
-  try {
-    data = JSON.parse(text)
-  } catch {
-    throw new Error('Server returned non-JSON response — check server logs.')
+}
+
+async function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as ArrayBuffer)
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsArrayBuffer(file)
+  })
+}
+
+async function extractTextFromFile(file: File): Promise<string> {
+  const name = file.name.toLowerCase()
+
+  // DOCX — use mammoth
+  if (name.endsWith('.docx')) {
+    const { default: mammoth } = await import('mammoth')
+    const ab = await readFileAsArrayBuffer(file)
+    const result = await mammoth.extractRawText({ arrayBuffer: ab })
+    return result.value
   }
-  if (!response.ok) {
-    throw new Error(data?.error || `Upload failed (${response.status})`)
+
+  // CSV / TSV — use papaparse
+  if (name.endsWith('.csv') || name.endsWith('.tsv')) {
+    const { default: Papa } = await import('papaparse')
+    const text = await readFileAsText(file)
+    const parsed = Papa.parse(text, { header: true, skipEmptyLines: true })
+    return JSON.stringify(parsed.data, null, 2)
   }
-  return data
+
+  // ZIP — extract and concatenate text files
+  if (name.endsWith('.zip')) {
+    const { default: JSZip } = await import('jszip')
+    const ab = await readFileAsArrayBuffer(file)
+    const zip = await JSZip.loadAsync(ab)
+    const parts: string[] = []
+    for (const [path, entry] of Object.entries(zip.files)) {
+      if ((entry as any).dir) continue
+      try {
+        const content = await (entry as any).async('string')
+        parts.push(`=== ${path} ===\n${content.substring(0, 3000)}`)
+      } catch { /* skip binary */ }
+    }
+    return parts.join('\n\n').substring(0, 50000)
+  }
+
+  // PDF — read as text (browser-compatible; server handles proper PDF parsing)
+  if (name.endsWith('.pdf')) {
+    return await readFileAsText(file)
+  }
+
+  // XLSX — use exceljs
+  if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+    const { default: ExcelJS } = await import('exceljs')
+    const ab = await readFileAsArrayBuffer(file)
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(ab)
+    const rows: string[] = []
+    workbook.eachSheet(sheet => {
+      sheet.eachRow(row => {
+        rows.push((row.values as any[]).slice(1).join('\t'))
+      })
+    })
+    return rows.join('\n').substring(0, 50000)
+  }
+
+  // Default: plain text
+  return await readFileAsText(file)
+}
+
+async function uploadFileForIntelligence(file: File): Promise<any> {
+  const text = await extractTextFromFile(file)
+  if (!text || text.trim().length < 10) {
+    throw new Error(`Could not extract readable text from ${file.name}`)
+  }
+  return extractIntelligenceFromText(text.substring(0, 60000))
 }
 
 function formatBytes(bytes: number): string {
@@ -57,6 +122,7 @@ export default function IngestToGraphPanel({ setGraph }: any) {
   const [isProcessingQueue, setIsProcessingQueue] = useState(false)
   const [queueProgress, setQueueProgress] = useState<{ done: number; total: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const processingRef = useRef(false)
 
   // ---------------------------------------------------------------------------
   // Queue helpers
@@ -84,15 +150,16 @@ export default function IngestToGraphPanel({ setGraph }: any) {
   // ---------------------------------------------------------------------------
   // Process the full queue sequentially
   // ---------------------------------------------------------------------------
-  const processQueue = async () => {
-    const pending = fileQueue.filter(q => q.status === 'pending')
+  const processQueue = async (queueSnapshot: QueuedFile[]) => {
+    if (processingRef.current) return
+    const pending = queueSnapshot.filter(q => q.status === 'pending')
     if (pending.length === 0) return
+    processingRef.current = true
     setIsProcessingQueue(true)
     setQueueProgress({ done: 0, total: pending.length })
 
     for (let i = 0; i < pending.length; i++) {
       const item = pending[i]
-      // Mark as processing
       setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'processing' } : q))
       try {
         const result = await uploadFileForIntelligence(item.file)
@@ -101,20 +168,30 @@ export default function IngestToGraphPanel({ setGraph }: any) {
       } catch (err: any) {
         setFileQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'error', error: err.message || 'Failed' } : q))
       }
-      setQueueProgress({ done: i + 1, total: pending.length })
+      setQueueProgress(prev => prev ? { ...prev, done: i + 1 } : { done: i + 1, total: pending.length })
     }
 
+    processingRef.current = false
     setIsProcessingQueue(false)
     setSuccess(true)
     setTimeout(() => setSuccess(false), 3000)
   }
+
+  // Auto-run: fire whenever new pending files arrive and queue is idle
+  useEffect(() => {
+    const hasPending = fileQueue.some(q => q.status === 'pending')
+    if (hasPending && !processingRef.current) {
+      processQueue(fileQueue)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileQueue.length])
 
   // ---------------------------------------------------------------------------
   // Text / URL ingest
   // ---------------------------------------------------------------------------
   const handleIngest = async () => {
     if (ingestType === 'file') {
-      await processQueue()
+      await processQueue(fileQueue)
       return
     }
     if (!inputValue.trim()) return
