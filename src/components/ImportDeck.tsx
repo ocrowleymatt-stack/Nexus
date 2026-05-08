@@ -376,7 +376,7 @@ export default function ImportDeck({ onImportComplete, onClose }: ImportDeckProp
                           </button>
                           <button
                             onClick={() => {
-                              const NEXUSPLEXUS_URL = 'https://nexusplexus-175978611575.us-central1.run.app';
+                              const NEXUSPLEXUS_URL = 'https://nexusplexus.onrender.com';
                               const payload = { fileName: selectedItem.file.name, ...selectedItem.graph };
                               const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
                               window.open(`${NEXUSPLEXUS_URL}/#nexus=${encoded}`, '_blank');
