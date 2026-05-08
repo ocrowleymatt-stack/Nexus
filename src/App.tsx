@@ -140,6 +140,80 @@ export default function App() {
     }
   }, [graph, projectName, centralNode, user])
 
+  // ── Remote Pulse: postMessage listener (Shakespeare ↔ Nexus bridge) ──────
+  useEffect(() => {
+    const handleRemoteCommand = async (event: MessageEvent) => {
+      const { command, payload } = (event.data || {}) as { command?: string; payload?: any }
+      if (!command) return
+      console.log('[NEXUS BRIDGE] Received command:', command, payload)
+      switch (command) {
+        case 'INGEST_ENTITY': {
+          if (!payload?.query) return
+          setIsSearching(true); setError(null)
+          try {
+            const result = await deepSearchEntity(payload.query)
+            setGraph(prev => mergeGraphs(prev, result))
+            if (result.centralNode) setCentralNode(result.centralNode)
+            setOverlayOpen(false)
+          } catch (err: any) { setError(err.message) }
+          finally { setIsSearching(false) }
+          break
+        }
+        case 'INGEST_TEXT': {
+          if (!payload?.text) return
+          setIsSearching(true); setError(null)
+          try {
+            const result = await extractIntelligenceFromText(payload.text)
+            setGraph(prev => mergeGraphs(prev, result))
+            if (result.centralNode) setCentralNode(result.centralNode)
+            setOverlayOpen(false)
+          } catch (err: any) { setError(err.message) }
+          finally { setIsSearching(false) }
+          break
+        }
+        case 'LOAD_FULL_GRAPH': {
+          if (!payload?.graph) return
+          setGraph(payload.graph)
+          if (payload.graph.centralNode) setCentralNode(payload.graph.centralNode)
+          if (payload.projectName) setProjectName(payload.projectName)
+          setOverlayOpen(false)
+          break
+        }
+        case 'EXPAND_GRAPH': {
+          handleExpandGraph()
+          break
+        }
+        case 'SET_MINIMAL': {
+          if (payload?.enabled !== undefined) {
+            setShowLeftSidebar(!payload.enabled)
+            setShowRightSidebar(false)
+          }
+          break
+        }
+        default:
+          console.warn('[NEXUS BRIDGE] Unknown command:', command)
+      }
+    }
+    window.addEventListener('message', handleRemoteCommand)
+    return () => window.removeEventListener('message', handleRemoteCommand)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ── Remote Pulse: broadcast GRAPH_UPDATED back to opener/parent ───────────
+  useEffect(() => {
+    if (graph.nodes.length === 0) return
+    const message = {
+      type: 'GRAPH_UPDATED',
+      graph,
+      projectName,
+      centralNode,
+      nodeCount: graph.nodes.length,
+      linkCount: graph.links.length,
+    }
+    if (window.opener) window.opener.postMessage(message, '*')
+    if (window.parent !== window) window.parent.postMessage(message, '*')
+  }, [graph])
+
   const startNewProject = () => {
     setGraph(initialGraph)
     setCurrentProjectId(null)
