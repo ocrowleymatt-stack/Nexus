@@ -2,10 +2,19 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from 'dotenv';
 dotenv.config();
 
-let ai;
-
-if (process.env.GEMINI_API_KEY) {
-  ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// ── Defensive AI initialisation ──────────────────────────────────────────────
+// Wrapping in try/catch so a missing or invalid key does NOT crash the module
+// at import time, which would prevent the whole Express server from starting.
+let ai = null;
+try {
+  if (process.env.GEMINI_API_KEY) {
+    ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    console.log('[AI] GoogleGenAI initialised with GEMINI_API_KEY');
+  } else {
+    console.warn('[AI] GEMINI_API_KEY not set — Gemini features disabled');
+  }
+} catch (err) {
+  console.error('[AI] Failed to initialise GoogleGenAI:', err.message);
 }
 
 const SEARCH_MODEL = "gemini-2.5-pro-preview";
