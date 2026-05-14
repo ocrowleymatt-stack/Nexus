@@ -5,7 +5,7 @@ import IngestToGraphPanel from './components/IngestToGraphPanel'
 import { NetworkMap } from './components/NetworkMap'
 import { SearchOverlay } from './components/SearchOverlay'
 import { GoldenShowerEffect, OCSignature } from './components/GoldenShowerEffect'
-import { deepSearchEntity, extractIntelligenceFromCsv, huntZipIntelligence, expandGraph, forensicSearchNode, veniceSensemaking, extractIntelligenceFromText, reconstructVisual } from './services/geminiService'
+import { deepSearchEntity, extractIntelligenceFromCsv, extractIntelligenceFromUrl, huntZipIntelligence, expandGraph, forensicSearchNode, veniceSensemaking, extractIntelligenceFromText, reconstructVisual } from './services/geminiService'
 import { mergeGraphs } from './lib/intelligenceGraph'
 import { auth, loginWithGoogle } from './lib/firebase'
 import { onAuthStateChanged, User, signOut } from 'firebase/auth'
@@ -15,6 +15,10 @@ import { NarrativeSidebar } from './components/NarrativeSidebar'
 import ReportingDeck from './components/ReportingDeck'
 import VisualSettingsPanel from './components/VisualSettingsPanel'
 import ImportDeck from './components/ImportDeck'
+import QuantumSearchPanel from './components/QuantumSearchPanel'
+import CorroborationPanel from './components/CorroborationPanel'
+import InterrogationPanel from './components/InterrogationPanel'
+import { DashboardStats, fetchDashboardStats } from './services/dashboardService'
 import { VisualSettings } from './types'
 import { NexusGraph } from './types/graph'
 
@@ -36,6 +40,8 @@ const defaultVisualSettings: VisualSettings = {
   linkStyle: 'default',
   showDataFlags: true
 }
+
+type WorkspaceTab = 'ingest' | 'query' | 'quantum' | 'corroboration' | 'projects' | 'reporting' | 'visuals'
 
 export default function App() {
   console.log('[CLIENT] App rendering');
@@ -64,7 +70,7 @@ export default function App() {
   const [projectName, setProjectName] = useState('New Investigation')
   const [isSaving, setIsSaving] = useState(false)
   const [showImportDeck, setShowImportDeck] = useState(false)
-  const [activeTab, setActiveTab] = useState<'ingest' | 'projects' | 'reporting' | 'visuals'>('ingest')
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('ingest')
   const [autoGrow, setAutoGrow] = useState(false)
   const [forensicReports, setForensicReports] = useState<Record<string, string>>({})
   const [loadingForensic, setLoadingForensic] = useState<Record<string, boolean>>({})
@@ -72,8 +78,34 @@ export default function App() {
   const [isReconstructing, setIsReconstructing] = useState<Record<string, boolean>>({})
   const [minimalMode, setMinimalMode] = useState(false)
   const [isLinked, setIsLinked] = useState(false)
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null)
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+
+  const liveStats: DashboardStats = dashboardStats ?? {
+    source: 'local',
+    investigations: projects.length + (currentProjectId ? 0 : graph.nodes.length > 0 ? 1 : 0),
+    files: graph.nodes.filter((node) => node.type === 'file' || node.group === 'file').length,
+    dataPoints: graph.nodes.length + graph.links.length,
+    entities: graph.nodes.length,
+    correlations: graph.links.length
+  }
+
+  const refreshDashboardStats = useCallback(async () => {
+    try {
+      setDashboardStats(await fetchDashboardStats())
+    } catch (err) {
+      console.warn('[DASHBOARD_STATS_FALLBACK]', err)
+      setDashboardStats(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshDashboardStats()
+    const interval = setInterval(refreshDashboardStats, 30000)
+    return () => clearInterval(interval)
+  }, [refreshDashboardStats])
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -465,7 +497,7 @@ Synchronized with remote repository. 12 new correlations identified.
           if (payload.side === 'right') setShowRightSidebar(payload.enabled);
           break;
         case 'RECONSTRUCT_IMAGE':
-          handleReconstructVisual(payload.entityName, payload.description);
+          handleReconstructVisual({ id: payload.entityName, name: payload.entityName, description: payload.description });
           break;
         case 'LOAD_FULL_GRAPH':
           setGraph(payload.graph);
@@ -629,6 +661,24 @@ Synchronized with remote repository. 12 new correlations identified.
                        Index
                     </button>
                     <button 
+                      onClick={() => setActiveTab('query')}
+                      className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-tech font-bold uppercase tracking-widest border transition-all ${activeTab === 'query' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
+                    >
+                      Query
+                    </button>
+                    <button 
+                      onClick={() => setActiveTab('quantum')}
+                      className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-tech font-bold uppercase tracking-widest border transition-all ${activeTab === 'quantum' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
+                    >
+                      Search
+                    </button>
+                    <button 
+                      onClick={() => setActiveTab('corroboration')}
+                      className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-tech font-bold uppercase tracking-widest border transition-all ${activeTab === 'corroboration' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
+                    >
+                      Corro
+                    </button>
+                    <button 
                       onClick={() => setActiveTab('projects')}
                       className={`flex items-center justify-center rounded-xl py-3 text-[8px] font-tech font-bold uppercase tracking-widest border transition-all ${activeTab === 'projects' ? 'bg-[#d4af37]/10 border-[#d4af37]/40 text-[#d4af37]' : 'bg-transparent border-white/5 text-white/40 hover:bg-white/5'}`}
                     >
@@ -717,6 +767,12 @@ Synchronized with remote repository. 12 new correlations identified.
                   ))
                 )}
               </div>
+            ) : activeTab === 'query' ? (
+              <InterrogationPanel graph={graph} />
+            ) : activeTab === 'quantum' ? (
+              <QuantumSearchPanel isSearching={isSearching} onSearch={handleDeepSearch} />
+            ) : activeTab === 'corroboration' ? (
+              <CorroborationPanel graph={graph} />
             ) : activeTab === 'reporting' ? (
               <div className="p-6">
                 <h3 className="text-[10px] font-bold uppercase tracking-widest text-white/30 mb-6">Reporting & Artifacts</h3>
@@ -748,15 +804,25 @@ Synchronized with remote repository. 12 new correlations identified.
             <FileText size={14} />
             Network Topology
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-xl bg-white/5 border border-white/5 p-4 transition-colors hover:border-white/10">
-              <div className="text-3xl font-black text-white">{graph.nodes.length}</div>
-              <div className="font-mono text-[9px] uppercase tracking-wider text-white/40">Entities</div>
-            </div>
-            <div className="rounded-xl bg-white/5 border border-white/5 p-4 transition-colors hover:border-white/10">
-              <div className="text-3xl font-black text-white">{graph.links.length}</div>
-              <div className="font-mono text-[9px] uppercase tracking-wider text-white/40">Correlations</div>
-            </div>
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-white/5 bg-white/[0.03] px-3 py-2">
+            <span className="font-mono text-[9px] uppercase tracking-widest text-white/30">Live Dashboard</span>
+            <span className={`rounded-full px-2 py-1 font-mono text-[8px] uppercase tracking-widest ${liveStats.source === 'api' ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20' : 'bg-[#d4af37]/10 text-[#d4af37] border border-[#d4af37]/20'}`}>
+              {liveStats.source === 'api' ? 'API' : 'Local'}
+            </span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            {[
+              ['Investigations', liveStats.investigations],
+              ['Files', liveStats.files],
+              ['Data Points', liveStats.dataPoints],
+              ['Entities', liveStats.entities],
+              ['Correlations', liveStats.correlations]
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-xl bg-white/5 border border-white/5 p-4 transition-colors hover:border-white/10">
+                <div className="text-2xl font-black text-white">{value}</div>
+                <div className="font-mono text-[9px] uppercase tracking-wider text-white/40">{label}</div>
+              </div>
+            ))}
           </div>
 
           <button
