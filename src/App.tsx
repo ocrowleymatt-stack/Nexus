@@ -5,7 +5,7 @@ import IngestToGraphPanel from './components/IngestToGraphPanel'
 import { NetworkMap } from './components/NetworkMap'
 import { SearchOverlay } from './components/SearchOverlay'
 import { GoldenShowerEffect, OCSignature } from './components/GoldenShowerEffect'
-import { deepSearchEntity, extractIntelligenceFromCsv, huntZipIntelligence, expandGraph, forensicSearchNode, veniceSensemaking, extractIntelligenceFromText, reconstructVisual } from './services/geminiService'
+import { deepSearchEntity, extractIntelligenceFromCsv, extractIntelligenceFromUrl, huntZipIntelligence, expandGraph, forensicSearchNode, veniceSensemaking, extractIntelligenceFromText, reconstructVisual } from './services/geminiService'
 import { mergeGraphs } from './lib/intelligenceGraph'
 import { auth, loginWithGoogle } from './lib/firebase'
 import { onAuthStateChanged, User, signOut } from 'firebase/auth'
@@ -465,7 +465,11 @@ Synchronized with remote repository. 12 new correlations identified.
           if (payload.side === 'right') setShowRightSidebar(payload.enabled);
           break;
         case 'RECONSTRUCT_IMAGE':
-          handleReconstructVisual(payload.entityName, payload.description);
+          handleReconstructVisual({
+            id: payload.entityName,
+            name: payload.entityName,
+            description: payload.description
+          });
           break;
         case 'LOAD_FULL_GRAPH':
           setGraph(payload.graph);
